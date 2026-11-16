@@ -1,0 +1,593 @@
+<div class="shell" [class.sidebar-collapsed]="sidebarCollapsed()">
+  <aside id="device-sidebar" class="sidebar" [class.is-open]="mobileMenu()">
+    <a
+      class="brand"
+      href="#"
+      (click)="$event.preventDefault(); navigate('dashboard')"
+      aria-label="One dashboard"
+    >
+      <img class="brand-mark" src="kore-o.png" alt="" width="28" height="28" />
+      <span class="brand-copy">One</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <button
+        class="nav-item"
+        aria-label="Dashboard"
+        title="Dashboard"
+        [class.active]="view() === 'dashboard'"
+        (click)="navigate('dashboard')"
+      >
+        <app-icon name="layout-dashboard" /> <span class="nav-text">Dashboard</span>
+      </button>
+      <button
+        class="nav-item"
+        aria-label="Devices"
+        title="Devices"
+        [class.active]="view() === 'devices'"
+        (click)="navigate('devices')"
+      >
+        <app-icon name="cpu" /> <span class="nav-text">Devices</span>
+      </button>
+      <span class="nav-label section-label">AVAILABLE CONNECTORS</span>
+      <button
+        class="nav-item"
+        aria-label="Coiote connector"
+        title="Coiote connector"
+        [class.active]="view() === 'connector'"
+        (click)="navigate('connector')"
+      >
+        <app-icon name="plug" /> <span class="nav-text">Coiote connector</span>
+      </button>
+    </nav>
+    <div class="sidebar-bottom">
+      <a
+        class="nav-item"
+        aria-label="API documentation"
+        title="API documentation"
+        href="http://127.0.0.1:8000/docs"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <app-icon name="circle-help" /> <span class="nav-text">API documentation</span>
+        <app-icon class="nav-external-icon" name="external-link" />
+      </a>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <div class="account">
+        <button
+          class="icon-button sidebar-toggle"
+          type="button"
+          [attr.aria-label]="sidebarCollapsed() ? 'Expand sidebar' : 'Collapse sidebar'"
+          [title]="sidebarCollapsed() ? 'Expand sidebar' : 'Collapse sidebar'"
+          aria-controls="device-sidebar"
+          [attr.aria-expanded]="!sidebarCollapsed()"
+          (click)="sidebarCollapsed.set(!sidebarCollapsed())"
+        >
+          <app-icon [name]="sidebarCollapsed() ? 'chevrons-right' : 'chevrons-left'" />
+        </button>
+        <button
+          class="icon-button mobile-toggle"
+          aria-label="Toggle navigation"
+          aria-controls="device-sidebar"
+          [attr.aria-expanded]="mobileMenu()"
+          (click)="mobileMenu.set(!mobileMenu())"
+        >
+          <app-icon name="menu" />
+        </button>
+        <div class="account-heading">
+          <div class="account-title">Kore One DM Prototype</div>
+          <span
+            class="role-banner"
+            title="Prototype role label only; authentication and permissions are not implemented"
+            >Super Admin</span
+          >
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content">
+      @if (notice()) {
+        <div class="notification" [class.error]="noticeError()" role="status" aria-live="polite">
+          <app-icon [name]="noticeError() ? 'circle-alert' : 'circle-check'" /><span>{{
+            notice()
+          }}</span>
+          <button class="icon-button" aria-label="Dismiss notification" (click)="notice.set('')">
+            <app-icon name="x" />
+          </button>
+        </div>
+      }
+      <router-outlet />
+      @if (!devicePage()) {
+        @if (view() === 'connector') {
+          <section class="page-enter">
+            <div class="page-heading">
+              <div>
+                <h1>Coiote connector</h1>
+              </div>
+              <span class="badge blue">REST API · LwM2M</span>
+            </div>
+            <dl class="connector-grid detail-grid">
+              <div>
+                <dt>Provider</dt>
+                <dd>AVSystem Coiote</dd>
+              </div>
+              <div>
+                <dt>Management API</dt>
+                <dd>REST</dd>
+              </div>
+              <div>
+                <dt>Device protocol</dt>
+                <dd>LwM2M</dd>
+              </div>
+              <div>
+                <dt>Device data</dt>
+                <dd>Stored metadata</dd>
+              </div>
+              <div>
+                <dt>Environment</dt>
+                <dd>Local PoC</dd>
+              </div>
+            </dl>
+            <div class="connector-actions">
+              <button class="button secondary" (click)="checkHealth()">
+                <app-icon name="refresh-cw" /> Check connection
+              </button>
+              <span
+                class="backend-state"
+                [class.unavailable]="health() === 'unavailable'"
+                [class.checking]="health() === 'checking'"
+                role="status"
+                title="Platform API only, not connector authentication or device reachability"
+                ><span class="tiny-dot"></span>
+                {{
+                  health() === 'available'
+                    ? 'Platform API available'
+                    : health() === 'checking'
+                      ? 'Checking platform API'
+                      : 'Platform API unavailable'
+                }}
+              </span>
+            </div>
+          </section>
+        } @else {
+          <section class="page-enter">
+            <div class="page-heading">
+              <div>
+                <h1>{{ view() === 'dashboard' ? 'Dashboard' : 'Devices' }}</h1>
+              </div>
+              <div class="heading-actions">
+                <button class="button primary" (click)="openCreate()" [disabled]="busy()">
+                  <app-icon name="plus" /> Create device
+                </button>
+              </div>
+            </div>
+
+            @if (view() === 'dashboard') {
+              <div class="stat-grid">
+                <article class="stat-card">
+                  <span class="stat-icon"><app-icon name="cpu" /></span>
+                  <div>
+                    <span>Devices</span
+                    ><strong>{{ loading() || loadError() ? '—' : devices().length }}</strong>
+                  </div>
+                </article>
+                <article class="stat-card">
+                  <span class="stat-icon"><app-icon name="radio" /></span>
+                  <div>
+                    <span>Registration history</span
+                    ><strong>{{ loading() || loadError() ? '—' : registered() }}</strong>
+                  </div>
+                </article>
+                <article class="stat-card">
+                  <span class="stat-icon"><app-icon name="clock" /></span>
+                  <div>
+                    <span>Never connected</span
+                    ><strong>{{ loading() || loadError() ? '—' : neverConnected() }}</strong>
+                  </div>
+                </article>
+                <article class="stat-card">
+                  <span class="stat-icon amber-icon"><app-icon name="database" /></span>
+                  <div>
+                    <span>Not in connector</span
+                    ><strong>{{ loading() || loadError() ? '—' : localOnly() }}</strong>
+                  </div>
+                </article>
+              </div>
+            }
+
+            <section
+              class="inventory"
+              aria-labelledby="inventory-title"
+              [attr.aria-busy]="loading()"
+            >
+              <div class="inventory-heading">
+                <h2 id="inventory-title">
+                  {{ view() === 'devices' ? 'All devices' : 'Device inventory' }}
+                  <span>{{ loading() || loadError() ? '—' : devices().length }}</span>
+                </h2>
+              </div>
+              <div class="inventory-toolbar">
+                <label class="search-box"
+                  ><app-icon name="search" /><input
+                    #searchInput
+                    aria-label="Search devices"
+                    placeholder="Search table"
+                    [value]="query()"
+                    (input)="search(searchInput.value)"
+                /></label>
+                <button
+                  class="button quiet"
+                  (click)="loadDevices()"
+                  [disabled]="busy()"
+                  title="Reload stored inventory; does not refresh connector data"
+                >
+                  <app-icon name="refresh-cw" [class.spin]="loading()" />
+                  {{ loading() ? 'Loading…' : 'Reload list' }}
+                </button>
+              </div>
+              @if (loadError()) {
+                <div class="empty-state error-state" role="alert">
+                  <app-icon name="circle-alert" />
+                  <h3>Inventory couldn't be loaded</h3>
+                  <p>{{ loadError() }}</p>
+                  <button class="button secondary" (click)="loadDevices()" [disabled]="busy()">
+                    Try again
+                  </button>
+                </div>
+              } @else if (loading()) {
+                <div class="empty-state" role="status">
+                  <app-icon name="loader-circle" class="spin" />
+                  <h3>Loading devices…</h3>
+                </div>
+              } @else if (!devices().length) {
+                <div class="empty-state">
+                  <span class="empty-icon"><app-icon name="cpu" /></span>
+                  <h3>No devices</h3>
+                  <p>Create a device to get started.</p>
+                  <button class="button primary" (click)="openCreate()" [disabled]="busy()">
+                    <app-icon name="plus" /> Create device
+                  </button>
+                </div>
+              } @else if (!filtered().length) {
+                <div class="empty-state">
+                  <app-icon name="search" />
+                  <h3>No matching devices</h3>
+                  <button class="text-button" (click)="search('')">Clear search</button>
+                </div>
+              } @else {
+                <div class="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Device name</th>
+                        <th>Friendly name</th>
+                        <th [attr.aria-sort]="sortAscending() ? 'ascending' : 'descending'">
+                          <button
+                            class="sort-button"
+                            (click)="sortAscending.set(!sortAscending())"
+                            [attr.aria-label]="
+                              sortAscending()
+                                ? 'Show newest devices first'
+                                : 'Show oldest devices first'
+                            "
+                          >
+                            Created time (UTC) <span>{{ sortAscending() ? '↑' : '↓' }}</span>
+                          </button>
+                        </th>
+                        <th title="First successful device registration recorded by the connector">
+                          Onboarding time (UTC)
+                        </th>
+                        <th title="Last recorded device contact, not a live online/offline check">
+                          Status <span class="column-note">Last seen (UTC)</span>
+                        </th>
+                        <th class="actions-column">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (device of rows(); track device.id) {
+                        <tr>
+                          <td>
+                            <button
+                              class="endpoint-link"
+                              (click)="openDetails(device)"
+                              [disabled]="busy()"
+                            >
+                              {{ device.endpoint_name }}
+                            </button>
+                          </td>
+                          <td>{{ device.friendly_name || '—' }}</td>
+                          <td class="timestamp">
+                            {{
+                              device.created_at
+                                ? (device.created_at | date: 'MMM d, y, HH:mm' : 'UTC')
+                                : '—'
+                            }}
+                          </td>
+                          <td class="timestamp">
+                            {{
+                              device.first_registered_at
+                                ? (device.first_registered_at | date: 'MMM d, y, HH:mm' : 'UTC')
+                                : '—'
+                            }}
+                          </td>
+                          <td class="timestamp">
+                            {{
+                              device.last_seen_at
+                                ? (device.last_seen_at | date: 'MMM d, y, HH:mm' : 'UTC')
+                                : 'No contact recorded'
+                            }}
+                          </td>
+                          <td>
+                            <div class="row-actions">
+                              <button
+                                class="icon-button"
+                                [attr.aria-label]="'Rename ' + device.endpoint_name"
+                                (click)="openRename(device)"
+                                [disabled]="busy()"
+                              >
+                                <app-icon name="pencil" /></button
+                              ><button
+                                class="icon-button danger-icon"
+                                [attr.aria-label]="'Delete ' + device.endpoint_name"
+                                (click)="openDelete(device)"
+                                [disabled]="busy()"
+                              >
+                                <app-icon name="trash-2" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+                <div class="pagination">
+                  <label
+                    >Rows per page
+                    <select
+                      #pageSizeInput
+                      aria-label="Rows per page"
+                      [value]="pageSize()"
+                      (change)="setPageSize(pageSizeInput.value)"
+                    >
+                      <option value="5">5</option>
+                      <option value="10">10</option>
+                      <option value="25">25</option>
+                    </select></label
+                  ><span>{{ rangeStart() }}–{{ rangeEnd() }} of {{ filtered().length }}</span>
+                  <div class="pagination-buttons">
+                    <button
+                      class="icon-button"
+                      aria-label="First page"
+                      [disabled]="currentPage() === 0"
+                      (click)="goPage(0)"
+                    >
+                      <app-icon name="chevrons-left" />
+                    </button>
+                    <button
+                      class="icon-button"
+                      aria-label="Previous page"
+                      [disabled]="currentPage() === 0"
+                      (click)="goPage(currentPage() - 1)"
+                    >
+                      <app-icon name="chevron-left" />
+                    </button>
+                    <button
+                      class="icon-button"
+                      aria-label="Next page"
+                      [disabled]="currentPage() >= pages() - 1"
+                      (click)="goPage(currentPage() + 1)"
+                    >
+                      <app-icon name="chevron-right" />
+                    </button>
+                    <button
+                      class="icon-button"
+                      aria-label="Last page"
+                      [disabled]="currentPage() >= pages() - 1"
+                      (click)="goPage(pages() - 1)"
+                    >
+                      <app-icon name="chevrons-right" />
+                    </button>
+                  </div>
+                </div>
+              }
+            </section>
+          </section>
+        }
+      }
+    </main>
+  </div>
+</div>
+
+<dialog
+  #dialog
+  aria-labelledby="dialog-title"
+  (cancel)="onCancel($event)"
+  (close)="onDialogClosed()"
+>
+  <div class="dialog-heading">
+    <div>
+      <h2 id="dialog-title">
+        {{
+          modalMode() === 'create'
+            ? 'Create device'
+            : modalMode() === 'rename'
+              ? 'Rename device'
+              : modalMode() === 'delete'
+                ? 'Delete device'
+                : 'Delete device'
+        }}
+      </h2>
+    </div>
+    <button
+      class="icon-button"
+      aria-label="Close dialog"
+      [disabled]="saving()"
+      (click)="closeDialog()"
+    >
+      <app-icon name="x" />
+    </button>
+  </div>
+  @if (modalError()) {
+    <div class="form-error" role="alert">
+      <app-icon name="circle-alert" /><span>{{ modalError() }}</span>
+    </div>
+  }
+  @switch (modalMode()) {
+    @case ('create') {
+      @if (form.controls.connector.value === 'coiote') {
+        <p class="dialog-intro">Creates a local and Coiote record.</p>
+      }
+      <form [formGroup]="form" (ngSubmit)="createDevice()" autocomplete="off">
+        <div class="form-body">
+          <label class="field">
+            Connector type <span class="required">*</span>
+            <select formControlName="connector" (change)="onConnectorChanged()" autofocus>
+              <option value="">Select connector</option>
+              <option value="coiote">AVSystem Coiote</option>
+            </select>
+          </label>
+          <label class="field"
+            >Endpoint name <span class="required">*</span
+            ><input
+              formControlName="endpoint"
+              placeholder="e.g. nexyn-test-device-03"
+              maxlength="256"
+          /></label>
+          <label class="field"
+            >Friendly name <span class="optional">Optional</span
+            ><input
+              formControlName="name"
+              placeholder="e.g. Lab temperature sensor"
+              maxlength="256"
+          /></label>
+          @if (form.controls.connector.value === 'coiote') {
+            <label class="field"
+              >Security mode<select formControlName="mode">
+                <option value="psk">Pre-shared key (PSK)</option>
+                <option value="nosec">No security (test only)</option>
+              </select></label
+            >
+            @if (form.controls.mode.value === 'psk') {
+              <div class="security-note">
+                <app-icon name="shield-check" /><span
+                  >Test credentials only. The backend stores PSKs in plaintext.</span
+                >
+              </div>
+              <label class="field"
+                >PSK identity <span class="required">*</span
+                ><input
+                  type="password"
+                  formControlName="identity"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="Exact client PSK identity"
+                /><small>Exact client identity; spaces are preserved.</small></label
+              >
+              <label class="field"
+                >Hexadecimal PSK key <span class="required">*</span
+                ><input
+                  type="password"
+                  formControlName="key"
+                  autocomplete="new-password"
+                  spellcheck="false"
+                  placeholder="Even-length hexadecimal, without 0x"
+                /><small>Match the client's hexadecimal key format.</small></label
+              >
+            } @else {
+              <div class="security-note warning">
+                <app-icon name="circle-alert" /><span
+                  >No transport protection. Test devices only.</span
+                >
+              </div>
+            }
+          }
+          @if (createBlocked()) {
+            <p class="form-error">
+              A record may exist. Reload the list and verify it in Coiote before retrying.
+              Credentials cleared.
+            </p>
+          }
+        </div>
+        <div class="dialog-footer">
+          <button
+            class="button secondary"
+            type="button"
+            (click)="closeDialog()"
+            [disabled]="saving()"
+          >
+            Cancel</button
+          ><button
+            class="button primary"
+            type="submit"
+            [disabled]="saving() || createBlocked() || form.controls.connector.value !== 'coiote'"
+          >
+            <app-icon [name]="saving() ? 'loader-circle' : 'plus'" [class.spin]="saving()" />{{
+              saving() ? 'Creating…' : 'Create device'
+            }}
+          </button>
+        </div>
+      </form>
+    }
+    @case ('rename') {
+      <p class="dialog-intro">
+        <strong>{{ selected()?.endpoint_name }}</strong> · Endpoint identity is unchanged.
+      </p>
+      <form [formGroup]="renameForm" (ngSubmit)="renameDevice()">
+        <div class="form-body">
+          <label class="field"
+            >Friendly name <span class="required">*</span><input formControlName="name" autofocus
+          /></label>
+        </div>
+        <div class="dialog-footer">
+          <button
+            type="button"
+            class="button secondary"
+            (click)="closeDialog()"
+            [disabled]="saving()"
+          >
+            Cancel</button
+          ><button type="submit" class="button primary" [disabled]="saving()">
+            {{ saving() ? 'Saving…' : 'Save name' }}
+          </button>
+        </div>
+      </form>
+    }
+    @case ('delete') {
+      <div class="delete-warning">
+        <app-icon name="trash-2" />
+        <h3>Delete {{ selected()?.endpoint_name }}?</h3>
+        <p>Removes the local record and any Coiote record. The running client is not stopped.</p>
+      </div>
+      <form [formGroup]="deleteForm" (ngSubmit)="deleteDevice()">
+        <div class="form-body">
+          <label class="field"
+            >Type <strong>{{ selected()?.endpoint_name }}</strong> to confirm<input
+              formControlName="confirmation"
+              autocomplete="off"
+              autofocus
+          /></label>
+        </div>
+        <div class="dialog-footer">
+          <button
+            type="button"
+            class="button secondary"
+            (click)="closeDialog()"
+            [disabled]="saving()"
+          >
+            Keep device</button
+          ><button
+            type="submit"
+            class="button danger"
+            [disabled]="saving() || deleteConfirm.value !== selected()?.endpoint_name"
+          >
+            <app-icon name="trash-2" />{{ saving() ? 'Deleting…' : 'Delete device' }}
+          </button>
+        </div>
+      </form>
+    }
+  }
+</dialog>

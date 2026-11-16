@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 import httpx
@@ -9,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 import main
 from database import initialize_database
-from models import Device, Group
+from models import Device, DeviceOperation, Group
 
 
 class DeviceAPITestCase(unittest.TestCase):
@@ -43,6 +44,416 @@ class DeviceAPITestCase(unittest.TestCase):
         self.client.close()
         main.app.dependency_overrides.pop(main.get_db)
         self.engine.dispose()
+
+
+class DeviceResourceTests(DeviceAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.remote = self.enterContext(patch("main.get_coiote_device_resources"))
+        self.remote.return_value = [
+            {"path": "Device.0.Manufacturer", "resourceId": 0,
+             "operations": ["Read"], "type": "String", "value": "stored manufacturer"},
+            {"path": "Device.0.Model Number", "resourceId": 1,
+             "operations": ["Read"], "type": "String"},
+            {"path": "Device.0.Firmware Version", "resourceId": 3,
+             "operations": ["Read"], "type": "String"},
+            {"path": "Security.0.Secret Key", "resourceId": 5,
+             "operations": ["Read", "Write"], "type": "Opaque", "value": "secret"},
+        ]
+        with self.session_factory() as db:
+            db.add(Device(
+                endpoint_name="test-endpoint", coiote_device_id="different-remote-id",
+                friendly_name="Unchanged", psk_key="secret",
+            ))
+            db.commit()
+
+    def test_discovery_filters_values_and_sensitive_resources_without_writes(self):
+        with (
+            patch("device_sync.list_coiote_devices") as inventory,
+            patch("device_sync.get_coiote_device_details") as details,
+        ):
+            response = self.client.get("/devices/test-endpoint/resources")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        body = response.json()
+        self.assertEqual(body["source"], "coiote_stored_model")
+        self.assertEqual(body["endpoint_name"], "test-endpoint")
+        self.assertTrue(body["fetched_at"].endswith("Z"))
+        self.assertEqual(len(body["resources"]), 3)
+        for resource in body["resources"]:
+            self.assertEqual(set(resource), {"key", "resource_id", "data_type", "operations"})
+            self.assertEqual(resource["operations"], ["Read"])
+        self.assertNotIn("stored manufacturer", response.text)
+        self.assertNotIn("secret", response.text)
+        self.assertNotIn("Security", response.text)
+        self.remote.assert_called_once_with("different-remote-id")
+        inventory.assert_not_called()
+        details.assert_not_called()
+        self.create.assert_not_called()
+        with self.session_factory() as db:
+            device = db.query(Device).one()
+            self.assertEqual(device.friendly_name, "Unchanged")
+            self.assertEqual(device.psk_key, "secret")
+            self.assertIsNone(device.refreshed_at)
+
+    def test_unknown_or_local_only_device_does_not_call_provider(self):
+        self.assertEqual(
+            self.client.get("/devices/unknown/resources").status_code, 404
+        )
+        with self.session_factory() as db:
+            db.query(Device).one().coiote_device_id = None
+            db.commit()
+        response = self.client.get("/devices/test-endpoint/resources")
+        self.assertEqual(response.status_code, 409)
+        self.remote.assert_not_called()
+
+    def test_empty_model_is_explicit_empty_discovery_not_online_proof(self):
+        self.remote.return_value = []
+        response = self.client.get("/devices/test-endpoint/resources")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["resources"], [])
+        self.assertNotIn("connection_status", response.json())
+
+    def test_provider_errors_are_sanitized_without_fallback(self):
+        request = httpx.Request("GET", "https://example.invalid/resources")
+        errors = [
+            httpx.ConnectError("secret"),
+            httpx.ReadTimeout("secret"),
+        ] + [
+            httpx.HTTPStatusError(
+                "secret", request=request,
+                response=httpx.Response(status, request=request, text="secret"),
+            ) for status in (401, 403, 404, 429, 500)
+        ]
+        for error in errors:
+            with self.subTest(error=error):
+                self.remote.side_effect = error
+                response = self.client.get("/devices/test-endpoint/resources")
+                self.assertEqual(response.status_code, 502)
+                self.assertNotIn("secret", response.text)
+
+    def test_malformed_and_conflicting_models_fail_explicitly(self):
+        record = self.remote.return_value[0]
+        payloads = [
+            None, {}, ["secret"], [{}],
+            [{**record, "resourceId": "0"}],
+            [{**record, "operations": ["Invented"]}],
+            [{**record, "type": "Invented"}],
+            [{**record, "resourceId": 1}],
+            [record, record],
+        ]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                self.remote.return_value = payload
+                response = self.client.get("/devices/test-endpoint/resources")
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(
+                    response.json()["detail"], "Coiote returned an invalid resource response"
+                )
+        self.remote.side_effect = ValueError("secret invalid JSON")
+        self.assertEqual(
+            self.client.get("/devices/test-endpoint/resources").status_code, 502
+        )
+
+
+class DeviceReadTests(DeviceAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.resources = self.enterContext(patch("main.get_coiote_device_resources"))
+        self.resources.return_value = [{
+            "path": "Device.0.Manufacturer", "resourceId": 0,
+            "type": "String", "operations": ["Read"],
+        }]
+        self.submit = self.enterContext(patch("main.submit_coiote_read", return_value="task:1"))
+        self.report = self.enterContext(patch("main.get_coiote_task_report"))
+        self.report.return_value = {
+            "taskId": "task:1", "deviceId": "remote/id",
+            "status": "Success", "finishTime": "2026-11-11T10:00:00Z",
+            "properties": [
+                {"name": "Device.0.Manufacturer", "value": "Test manufacturer"},
+                {"name": "internal", "value": "secret upstream diagnostic"},
+            ],
+        }
+        with self.session_factory() as db:
+            db.add(Device(endpoint_name="read-device", coiote_device_id="remote/id"))
+            db.add(Device(endpoint_name="other-device", coiote_device_id="other"))
+            db.commit()
+        self.url = "/devices/read-device"
+        self.body = {"resource_key": "Device.0.Manufacturer"}
+
+    def submit_read(self):
+        response = self.client.post(f"{self.url}/reads", json=self.body)
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["status"], "pending")
+        self.assertIsNone(response.json()["value"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        return response.headers["location"]
+
+    def test_submit_then_success_persists_result_without_replaying(self):
+        location = self.submit_read()
+        with self.session_factory() as db:
+            operation = db.query(DeviceOperation).one()
+            self.assertEqual(operation.task_id, "task:1")
+            self.submit.assert_called_once_with(
+                "remote/id", "Device.0.Manufacturer", operation.id
+            )
+        response = self.client.get(location)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "succeeded")
+        self.assertEqual(body["value"], "Test manufacturer")
+        self.assertTrue(body["completed_at"].endswith("Z"))
+        self.assertNotIn("secret", response.text)
+        self.assertNotIn("task_id", body)
+        self.assertEqual(self.client.get(location).json(), body)
+        self.report.assert_called_once_with("task:1", "remote/id")
+        self.submit.assert_called_once()
+
+    def test_validation_and_capability_checks_prevent_submission(self):
+        for key in ("Security.0.Secret Key", "Device.0.Reboot", ""):
+            self.assertEqual(
+                self.client.post(f"{self.url}/reads", json={"resource_key": key}).status_code,
+                422,
+            )
+        self.resources.return_value[0]["operations"] = []
+        self.assertEqual(
+            self.client.post(f"{self.url}/reads", json=self.body).status_code, 422
+        )
+        self.submit.assert_not_called()
+        with self.session_factory() as db:
+            self.assertEqual(db.query(DeviceOperation).count(), 0)
+        self.assertEqual(
+            self.client.post("/devices/missing/reads", json=self.body).status_code, 404
+        )
+        with self.session_factory() as db:
+            db.query(Device).filter_by(endpoint_name="read-device").one().coiote_device_id = None
+            db.commit()
+        self.assertEqual(
+            self.client.post(f"{self.url}/reads", json=self.body).status_code, 409
+        )
+
+    def test_pending_codes_and_statuses_preserve_operation(self):
+        location = self.submit_read()
+        for status in ("NotStarted", "InProgress", "ErrorRetryable"):
+            self.report.return_value["status"] = status
+            self.assertEqual(self.client.get(location).json()["status"], "pending")
+        request = httpx.Request("GET", "https://example.invalid/report")
+        self.report.side_effect = httpx.HTTPStatusError(
+            "secret", request=request,
+            response=httpx.Response(404, request=request, json={"code": 4041}),
+        )
+        self.assertEqual(self.client.get(location).json()["status"], "pending")
+
+    def test_failures_and_task_not_found_are_explicit(self):
+        for status in ("Warning", "Error"):
+            with self.subTest(status=status):
+                location = self.submit_read()
+                self.report.return_value["status"] = status
+                body = self.client.get(location).json()
+                self.assertEqual(body["status"], "failed")
+                self.assertIsNone(body["value"])
+                self.assertNotIn("secret", str(body))
+        location = self.submit_read()
+        request = httpx.Request("GET", "https://example.invalid/report")
+        self.report.side_effect = httpx.HTTPStatusError(
+            "secret", request=request,
+            response=httpx.Response(404, request=request, json={"code": 4040}),
+        )
+        self.assertEqual(self.client.get(location).json()["status"], "not_found")
+
+    def test_invalid_or_unavailable_reports_do_not_change_pending_state(self):
+        location = self.submit_read()
+        original = self.report.return_value
+        reports = [
+            {}, {**original, "deviceId": "other"},
+            {**original, "taskId": "wrong"}, {**original, "status": "invented"},
+            {**original, "properties": []},
+            {**original, "properties": original["properties"] * 2},
+            {**original, "finishTime": None},
+            {**original, "finishTime": "2026-11-11T10:00:00"},
+        ]
+        for report in reports:
+            self.report.return_value = report
+            self.assertEqual(self.client.get(location).status_code, 502)
+        self.report.side_effect = httpx.ReadTimeout("secret")
+        response = self.client.get(location)
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("secret", response.text)
+        with self.session_factory() as db:
+            self.assertEqual(db.query(DeviceOperation).one().status, "pending")
+
+    def test_submission_uncertainty_is_saved_and_not_retried(self):
+        for error in (httpx.ReadTimeout("secret"), ValueError("secret invalid JSON")):
+            self.submit.side_effect = error
+            response = self.client.post(f"{self.url}/reads", json=self.body)
+            self.assertEqual(response.status_code, 502)
+            self.assertNotIn("secret", response.text)
+            operation_id = response.json()["detail"]["operation_id"]
+            body = self.client.get(f"{self.url}/operations/{operation_id}").json()
+            self.assertEqual(body["status"], "submission_unknown")
+        self.assertEqual(self.submit.call_count, 2)
+        self.report.assert_not_called()
+
+    def test_rejected_and_invalid_submission_response(self):
+        request = httpx.Request("POST", "https://example.invalid/tasks")
+        self.submit.side_effect = httpx.HTTPStatusError(
+            "secret", request=request,
+            response=httpx.Response(403, request=request),
+        )
+        response = self.client.post(f"{self.url}/reads", json=self.body)
+        operation_id = response.json()["detail"]["operation_id"]
+        self.assertEqual(
+            self.client.get(f"{self.url}/operations/{operation_id}").json()["status"],
+            "rejected",
+        )
+        self.submit.side_effect = None
+        self.submit.return_value = {"id": "not-a-task-id-string"}
+        self.assertEqual(
+            self.client.post(f"{self.url}/reads", json=self.body).status_code, 502
+        )
+
+    def test_operation_cannot_be_fetched_for_another_device(self):
+        location = self.submit_read()
+        self.assertEqual(
+            self.client.get(location.replace("/read-device/", "/other-device/")).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(f"{self.url}/operations/missing").status_code, 404
+        )
+        self.report.assert_not_called()
+
+    def test_upstream_http_report_errors_do_not_become_task_failures(self):
+        location = self.submit_read()
+        request = httpx.Request("GET", "https://example.invalid/report")
+        for status, payload in ((401, {}), (403, {}), (429, {}), (500, {}),
+                                (404, {"code": 9999}), (404, [])):
+            self.report.side_effect = httpx.HTTPStatusError(
+                "secret", request=request,
+                response=httpx.Response(status, request=request, json=payload),
+            )
+            response = self.client.get(location)
+            self.assertEqual(response.status_code, 502)
+            self.assertNotIn("secret", response.text)
+        with self.session_factory() as db:
+            self.assertEqual(db.query(DeviceOperation).one().status, "pending")
+
+    def test_initialization_preserves_submitted_operations(self):
+        self.submit_read()
+        initialize_database(self.engine)
+        initialize_database(self.engine)
+        with self.session_factory() as db:
+            self.assertEqual(db.query(DeviceOperation).one().task_id, "task:1")
+            self.assertEqual(db.query(Device).count(), 2)
+
+
+class DeviceWriteTests(DeviceAPITestCase):
+    def setUp(self):
+        super().setUp()
+        self.resources = self.enterContext(patch("main.get_coiote_device_resources"))
+        self.resources.return_value = [{
+            "path": "Device.0.Timezone", "resourceId": 15,
+            "type": "String", "operations": ["Read", "Write"],
+        }]
+        self.submit = self.enterContext(patch(
+            "main.submit_coiote_timezone_write", return_value="task:tz"
+        ))
+        self.report = self.enterContext(patch("main.get_coiote_task_report"))
+        self.report.return_value = {
+            "taskId": "task:tz", "deviceId": "remote/id", "status": "Success",
+            "finishTime": "2026-11-16T07:00:00Z",
+            "properties": [{"name": "Device.0.Timezone", "value": "Etc/UTC"}],
+        }
+        with self.session_factory() as db:
+            db.add(Device(endpoint_name="write-device", coiote_device_id="remote/id"))
+            db.commit()
+        self.url = "/devices/write-device/writes"
+        self.body = {"resource_key": "Device.0.Timezone", "value": "Etc/UTC"}
+
+    def test_write_is_pending_until_read_back_matches_and_result_is_persistent(self):
+        response = self.client.post(self.url, json={**self.body, "value": " Etc/UTC "})
+        self.assertEqual(response.status_code, 202, response.text)
+        operation = response.json()
+        self.assertEqual(operation["kind"], "write")
+        self.assertEqual(operation["requested_value"], "Etc/UTC")
+        self.assertEqual(operation["status"], "pending")
+        self.assertIsNone(operation["value"])
+        self.submit.assert_called_once_with(
+            "remote/id", "Device.0.Timezone", "Etc/UTC", operation["id"]
+        )
+        result = self.client.get(response.headers["location"])
+        self.assertEqual(result.json()["status"], "succeeded")
+        self.assertEqual(result.json()["value"], "Etc/UTC")
+        self.assertEqual(self.client.get(response.headers["location"]).json(), result.json())
+        self.report.assert_called_once()
+
+    def test_only_valid_readable_writable_timezone_can_be_submitted(self):
+        for value in ("", "../Etc/UTC", "Not/AZone", "A" * 32):
+            with self.subTest(value=value):
+                self.assertEqual(self.client.post(
+                    self.url, json={**self.body, "value": value}
+                ).status_code, 422)
+        for key in ("Device.0.Manufacturer", "Device.1.Timezone", "Security.0.Secret Key"):
+            self.assertEqual(self.client.post(
+                self.url, json={**self.body, "resource_key": key}
+            ).status_code, 422)
+        self.resources.assert_not_called()
+        self.resources.return_value[0]["operations"] = ["Read"]
+        self.assertEqual(self.client.post(self.url, json=self.body).status_code, 422)
+        self.resources.return_value[0]["type"] = "Integer"
+        self.assertEqual(self.client.post(self.url, json=self.body).status_code, 502)
+        self.submit.assert_not_called()
+        with self.session_factory() as db:
+            self.assertEqual(db.query(DeviceOperation).count(), 0)
+
+    def test_successful_task_with_mismatched_read_back_is_not_synced(self):
+        response = self.client.post(self.url, json=self.body)
+        self.report.return_value["properties"][0]["value"] = "Europe/Warsaw"
+        result = self.client.get(response.headers["location"]).json()
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["value"], "Europe/Warsaw")
+        self.assertIn("did not match", result["error"])
+
+    def test_unresolved_write_blocks_resubmission_and_uncertainty_is_explicit(self):
+        self.submit.side_effect = httpx.ReadTimeout("secret")
+        response = self.client.post(self.url, json=self.body)
+        self.assertEqual(response.status_code, 502)
+        operation_id = response.json()["detail"]["operation_id"]
+        result = self.client.get(f"/devices/write-device/operations/{operation_id}").json()
+        self.assertEqual(result["status"], "submission_unknown")
+        self.assertNotIn("secret", response.text)
+        repeat = self.client.post(self.url, json=self.body)
+        self.assertEqual(repeat.status_code, 409)
+        self.assertEqual(repeat.json()["detail"]["operation_id"], operation_id)
+        self.submit.assert_called_once()
+        self.report.assert_not_called()
+
+    def test_legacy_read_operations_survive_additive_migration(self):
+        engine = create_engine("sqlite://", poolclass=StaticPool)
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("""
+                    CREATE TABLE device_operations (
+                        id VARCHAR PRIMARY KEY, device_id INTEGER, coiote_device_id VARCHAR,
+                        resource_key VARCHAR, task_id VARCHAR, status VARCHAR, value VARCHAR,
+                        error VARCHAR, created_at DATETIME, completed_at DATETIME
+                    )
+                """))
+                connection.execute(text("""
+                    INSERT INTO device_operations
+                    (id, device_id, coiote_device_id, resource_key, task_id, status, created_at)
+                    VALUES ('old-read', 1, 'remote', 'Device.0.Manufacturer', 'task-old',
+                            'pending', '2026-11-16 07:00:00')
+                """))
+            initialize_database(engine)
+            initialize_database(engine)
+            with engine.connect() as connection:
+                row = connection.execute(text(
+                    "SELECT kind, requested_value, task_id FROM device_operations"
+                )).one()
+                self.assertEqual(tuple(row), ("read", None, "task-old"))
+        finally:
+            engine.dispose()
 
 
 class GroupAPITests(DeviceAPITestCase):
@@ -242,8 +653,59 @@ class DeviceRefreshTests(DeviceAPITestCase):
             db.commit()
             return device.id
 
-    def test_list_refreshes_on_every_get_and_preserves_local_identity_and_secrets(self):
+    def test_list_and_details_use_stored_records_without_provider_requests(self):
+        stored_at = datetime(2026, 11, 9, 10, 2, tzinfo=timezone.utc)
+        local_id = self.seed(
+            connection_status="unknown", refreshed_at=stored_at,
+            last_seen_at=stored_at, connector_type="management", domain="/stored/",
+        )
+        self.seed(endpoint_name="second-endpoint", coiote_device_id="second-id")
+        self.list_devices.side_effect = httpx.ConnectError("provider unavailable")
+        self.details.side_effect = httpx.ConnectError("provider unavailable")
+        for _ in range(2):
+            listed = self.client.get("/devices")
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual(listed.headers["cache-control"], "no-store")
+            self.assertEqual(
+                [item["endpoint_name"] for item in listed.json()],
+                ["test-endpoint", "second-endpoint"],
+            )
+            response = self.client.get("/devices/test-endpoint")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["cache-control"], "no-store")
+            body = response.json()
+            self.assertEqual(body["local"]["id"], local_id)
+            self.assertEqual(body["local"]["friendly_name"], "Old local name")
+            self.assertEqual(body["local"]["refreshed_at"], "2026-11-09T10:02:00Z")
+            self.assertEqual(body["local"]["last_seen_at"], "2026-11-09T10:02:00Z")
+            self.assertEqual(body["coiote_snapshot"]["domain"], "/stored/")
+            self.assertEqual(
+                body["coiote_snapshot"]["fetched_at"], body["local"]["refreshed_at"]
+            )
+            self.assertNotIn("psk_key", response.text)
+            self.assertNotIn("psk_identity", response.text)
+            self.assertNotIn("local identity", response.text)
+        self.list_devices.assert_not_called()
+        self.details.assert_not_called()
+
+    def test_created_device_is_immediately_readable_without_rediscovery(self):
+        created = self.client.post("/devices", json=self.payload)
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["coiote_device_id"], "test-endpoint")
+        self.list_devices.side_effect = httpx.ConnectError("provider unavailable")
+        response = self.client.get("/devices/test-endpoint")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["local"], created.json())
+        self.assertIsNone(response.json()["coiote_snapshot"])
+        self.assertIsNone(response.json()["local"]["refreshed_at"])
+        self.assertEqual(self.client.get("/devices").json(), [created.json()])
+        self.create.assert_called_once()
+        self.list_devices.assert_not_called()
+        self.details.assert_not_called()
+
+    def test_explicit_sync_refreshes_and_preserves_local_identity_and_secrets(self):
         local_id = self.seed()
+        self.assertEqual(self.client.post("/sync-devices").status_code, 200)
         first = self.client.get("/devices")
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.headers["cache-control"], "no-store")
@@ -259,6 +721,7 @@ class DeviceRefreshTests(DeviceAPITestCase):
         self.assertNotIn("psk_identity", device)
         self.record["friendlyName"] = "Changed again"
         self.record["lastContactTime"] = "2026-11-09T10:03:00Z"
+        self.assertEqual(self.client.post("/sync-devices").status_code, 200)
         second = self.client.get("/devices")
         self.assertEqual(second.json()[0]["friendly_name"], "Changed again")
         self.assertEqual(second.json()[0]["last_seen_at"], "2026-11-09T10:03:00Z")
@@ -272,7 +735,8 @@ class DeviceRefreshTests(DeviceAPITestCase):
             self.assertEqual(device.psk_identity, "local identity")
             self.assertEqual(device.psk_key, "001122")
 
-    def test_detail_imports_new_devices_and_only_returns_allowlisted_fields(self):
+    def test_detail_only_returns_allowlisted_fields_after_explicit_import(self):
+        self.assertEqual(self.client.post("/sync-devices").status_code, 200)
         response = self.client.get("/devices/test-endpoint")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["cache-control"], "no-store")
@@ -324,28 +788,23 @@ class DeviceRefreshTests(DeviceAPITestCase):
             "secret error", request=request,
             response=httpx.Response(503, request=request, text="secret error"),
         )
-        for method, route in (
-            ("get", "/devices"), ("get", "/devices/test-endpoint"),
-            ("post", "/sync-devices"),
-        ):
-            with self.subTest(route=route):
-                self.details.side_effect = [self.record, failure]
-                response = getattr(self.client, method)(route)
-                self.assertEqual(response.status_code, 502)
-                self.assertEqual(
-                    response.json()["detail"], "Coiote request failed (HTTP 503)"
-                )
-                self.assertNotIn("secret error", response.text)
-                self.assertNotIn("Old local name", response.text)
-                with self.session_factory() as db:
-                    device = db.query(Device).one()
-                    self.assertEqual(device.friendly_name, "Old local name")
-                    self.assertIsNone(device.refreshed_at)
+        self.details.side_effect = [self.record, failure]
+        response = self.client.post("/sync-devices")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json()["detail"], "Coiote request failed (HTTP 503)"
+        )
+        self.assertNotIn("secret error", response.text)
+        self.assertNotIn("Old local name", response.text)
+        with self.session_factory() as db:
+            device = db.query(Device).one()
+            self.assertEqual(device.friendly_name, "Old local name")
+            self.assertIsNone(device.refreshed_at)
 
     def test_transport_failure_is_explicit(self):
         self.seed()
         self.list_devices.side_effect = httpx.ConnectError("secret connection details")
-        response = self.client.get("/devices")
+        response = self.client.post("/sync-devices")
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["detail"], "Coiote request could not be completed")
         self.assertNotIn("secret connection details", response.text)
@@ -364,7 +823,7 @@ class DeviceRefreshTests(DeviceAPITestCase):
         for record in invalid_records:
             with self.subTest(record=record):
                 self.details.return_value = record
-                self.assertEqual(self.client.get("/devices").status_code, 502)
+                self.assertEqual(self.client.post("/sync-devices").status_code, 502)
                 with self.session_factory() as db:
                     self.assertEqual(db.query(Device).count(), 0)
 
@@ -372,23 +831,26 @@ class DeviceRefreshTests(DeviceAPITestCase):
         for ids in ({}, ["remote-id", "remote-id"], [1], [""]):
             with self.subTest(ids=ids):
                 self.list_devices.return_value = ids
-                self.assertEqual(self.client.get("/devices").status_code, 502)
+                self.assertEqual(self.client.post("/sync-devices").status_code, 502)
         self.details.assert_not_called()
 
     def test_never_connected_is_not_inferred_as_offline_or_running(self):
         self.record.update(
             firstRegisterTime=None, lastRegisterTime=None, lastContactTime=None
         )
+        self.assertEqual(self.client.post("/sync-devices").status_code, 200)
         response = self.client.get("/devices")
         self.assertEqual(response.json()[0]["connection_status"], "never_connected")
         self.assertIsNone(response.json()[0]["last_seen_at"])
         self.record["lastContactTime"] = "2026-11-09T10:00:00Z"
+        self.assertEqual(self.client.post("/sync-devices").status_code, 200)
         response = self.client.get("/devices")
         self.assertEqual(response.json()[0]["connection_status"], "unknown")
 
     def test_missing_remote_record_is_explicit_and_local_record_is_preserved(self):
         local_id = self.seed(connection_status="unknown", domain="/old/")
         self.list_devices.return_value = []
+        self.assertEqual(self.client.post("/sync-devices").status_code, 200)
         response = self.client.get("/devices/test-endpoint")
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["coiote_snapshot"])
@@ -403,14 +865,18 @@ class DeviceRefreshTests(DeviceAPITestCase):
             self.assertEqual(device.psk_key, "001122")
         self.details.assert_not_called()
 
-    def test_unknown_endpoint_returns_404_after_refresh(self):
+    def test_unknown_endpoint_returns_404_without_importing_or_contacting_coiote(self):
         response = self.client.get("/devices/missing")
         self.assertEqual(response.status_code, 404)
-        self.list_devices.assert_called_once()
+        self.assertEqual(self.client.get("/devices/test-endpoint").status_code, 404)
+        self.assertEqual(self.client.get("/devices").json(), [])
+        self.list_devices.assert_not_called()
+        self.details.assert_not_called()
 
     def test_remote_rename_preserves_local_id_and_does_not_duplicate(self):
         local_id = self.seed()
         self.record["properties"]["endpointName"] = "renamed-endpoint"
+        self.assertEqual(self.client.post("/sync-devices").status_code, 200)
         response = self.client.get("/devices/renamed-endpoint")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["local"]["id"], local_id)
@@ -421,7 +887,7 @@ class DeviceRefreshTests(DeviceAPITestCase):
         self.seed()
         self.seed(endpoint_name="other-endpoint", coiote_device_id="other-id")
         self.record["properties"]["endpointName"] = "other-endpoint"
-        response = self.client.get("/devices")
+        response = self.client.post("/sync-devices")
         self.assertEqual(response.status_code, 409)
         with self.session_factory() as db:
             self.assertEqual(db.query(Device).count(), 2)
@@ -431,6 +897,7 @@ class DeviceRefreshTests(DeviceAPITestCase):
         self.seed()
         self.record["friendlyName"] = None
         self.record["lastContactTime"] = "2026-11-09T12:02:00+02:00"
+        self.assertEqual(self.client.post("/sync-devices").status_code, 200)
         response = self.client.get("/devices")
         self.assertIsNone(response.json()[0]["friendly_name"])
         self.assertEqual(response.json()[0]["last_seen_at"], "2026-11-09T10:02:00Z")
