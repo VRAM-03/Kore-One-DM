@@ -13,6 +13,14 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base() # the base class from which all models will inherit
 
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def initialize_database(db_engine: Engine) -> None:
     Base.metadata.create_all(bind=db_engine)
     additions = {
