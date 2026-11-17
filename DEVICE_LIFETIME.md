@@ -1,8 +1,7 @@
 # Device connection lifetime
 
-Lifetime reads use confirmed values stored in the Nexyn database, contacting
-Coiote only when no non-null lifetime exists for the device. Writes still send
-LwM2M operations through Coiote and verify the device's readback.
+The lifetime APIs send LwM2M operations through Coiote to the device.
+They do not update a local device field and pretend the device has changed.
 Implementation: [device_lifetime.py](device_lifetime.py).
 
 There are exactly **two application endpoints**:
@@ -12,10 +11,9 @@ There are exactly **two application endpoints**:
 | Write | `PATCH /devices/{endpoint_name}/lifetime` | Endpoint name and lifetime in seconds |
 | Read | `POST /devices/{endpoint_name}/lifetime/read` | Endpoint name only; no body |
 
-Each action requires **one application request**. For writes and uncached reads,
-the backend schedules the Coiote operation, polls its report, and retrieves the
-fresh value internally before responding. Cached reads make no Coiote calls.
-There is no public task-result endpoint or caller polling.
+Each action requires **one application request**. The backend schedules the
+Coiote operation, polls its report, and retrieves the fresh value internally
+before responding. There is no public task-result endpoint or caller polling.
 
 ## Setup
 
@@ -73,36 +71,23 @@ The operations run sequentially (`batchRequests=false`):
 The backend waits for the task and readback to complete, then returns **200**
 with the verified lifetime. It never returns `accepted` as the final result.
 If the trigger or read fails after a successful write, the response is **502**
-with `state: failed`; the device may already have changed. Verify its state
-through Coiote before retrying, since the read endpoint may return a previously
-stored observation.
+with `state: failed`; the device may already have changed, so use the read
+endpoint to check it.
 
 ## Read action
 
 `POST /devices/{endpoint_name}/lifetime/read`
 
-No request body. Returns **200** with the latest non-null `confirmed_lifetime`
-from `device_lifetime_tasks`, ordered by `observed_at` and matched to both the
-local device ID and its current Coiote device ID. This makes no Coiote requests
-and creates no new task. Values confirmed by either a read or a write/readback
-can be reused.
-
-If no confirmed value exists (including when all stored lifetimes are null),
-the backend schedules a real device **read** through Coiote, waits for completion,
-and persists the confirmed result for subsequent reads. Failed or pending tasks
-are not treated as confirmed values.
-
-The stored value has no automatic expiry. `observed_at` remains the original
-device observation time, and `task_id` identifies that observation's task.
-Changes made outside these APIs are not automatically reflected.
+No request body. This schedules a real device **read** through Coiote, waits for
+completion, and returns **200** with the current `lifetime` in the same response.
+It does not return a previous local snapshot.
 
 In Swagger, execute the read endpoint once with the endpoint name. A frontend
 Read button should make this one application request and display `lifetime`.
 
 ## Internal Coiote requests
 
-For writes and reads without a stored value, the backend handles these calls;
-the application does not need to make them:
+The backend handles these calls; the application does not need to make them:
 
 1. Read the Coiote data model to discover the correct Server instance.
 2. Schedule the fresh read or write/readback configuration task.
@@ -135,33 +120,31 @@ Successful write response:
 ```
 
 For a read-only task, `operation` is `read`, and `requested_lifetime` and
-`matches_requested` are null, including when reusing a write task's readback.
-`lifetime` is the stored or newly fetched device-reported value from Coiote.
+`matches_requested` are null. `lifetime` is the device-reported value from Coiote.
 The returned task ID is diagnostic metadata only; callers do not need to use it.
 
 ## Waiting and timeouts
 
-Writes and uncached reads have a **30-second overall Coiote-operation deadline**,
-including discovery and task submission. The backend polls at one-second
-intervals using asynchronous waits, not a blocking sleep.
+Both endpoints have a **30-second overall Coiote-operation deadline**, including
+discovery and task submission. The backend polls at one-second intervals using
+asynchronous waits, not a blocking sleep.
 
 | Result | HTTP | Meaning |
 |---|---|---|
-| succeeded | 200 | Stored or freshly fetched device-reported lifetime available |
+| succeeded | 200 | Fresh device-reported lifetime available |
 | verification_failed | 409 | Fresh read differs from the requested value |
 | failed | 502 | Coiote reports Error or Warning; no verified value returned |
 | timeout | 504 | Coiote did not provide a fresh result before the deadline |
 
 A timeout returns an explicit `detail`, not `accepted` or a stale lifetime.
 Coiote may still execute a submitted task after the HTTP request times out.
-Verify the device state through Coiote before retrying a write; a database-first
-read may still return an earlier observation.
+Use the read endpoint to check the current device state before retrying a write.
 Ensure the application's HTTP timeout and proxy timeout exceed 30 seconds.
 
 Task metadata and successful read snapshots are persisted in
 `device_lifetime_tasks`, created automatically on startup. Task IDs are bound
 to the originating local device and Coiote device ID. These records are internal;
-the read endpoint reuses the latest confirmed snapshot when available.
+each read endpoint call performs a new read instead of returning an old snapshot.
 Responses disable HTTP caching.
 
 No destructive migration drops any legacy `devices.lifetime` column that may
