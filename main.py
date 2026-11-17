@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Request, Response
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -10,12 +10,15 @@ from pydantic import (
 from typing import Literal, Optional
 from datetime import datetime, timezone
 import httpx
+import os
 import re
 from uuid import uuid4
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from database import engine, SessionLocal, Base, initialize_database
+from database import engine, Base, get_db, initialize_database
+from device_lifetime import router as lifetime_router
+from device_time import router as time_router
 from device_sync import coiote_request_error, refresh_devices
 from models import Device, DeviceOperation, Group
 from coiote_client import (
@@ -27,10 +30,31 @@ from coiote_client import (
     submit_coiote_timezone_write,
     update_coiote_device,
 )
+from fota_client import (
+    create_firmware_resource,
+    delete_firmware_resource,
+    get_firmware_task_report,
+    start_firmware_update,
+    upload_firmware_data,
+)
 
 initialize_database(engine)
 
 app = FastAPI()
+app.include_router(lifetime_router)
+app.include_router(time_router)
+FOTA_ENABLED = os.getenv("FOTA_ENABLED", "false").strip().lower() == "true"
+MAX_FIRMWARE_SIZE_BYTES = 100 * 1024 * 1024
+
+
+def fota_request_error(
+    operation: str, error: httpx.HTTPStatusError | httpx.RequestError
+) -> HTTPException:
+    if isinstance(error, httpx.HTTPStatusError):
+        detail = f"Coiote {operation} failed (HTTP {error.response.status_code})"
+    else:
+        detail = f"Coiote {operation} could not be completed"
+    return HTTPException(status_code=502, detail=detail)
 
 
 @app.exception_handler(RequestValidationError)
@@ -46,14 +70,6 @@ async def request_validation_error(
             ]
         },
     )
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 class DeviceCreate(BaseModel):
@@ -629,3 +645,165 @@ def delete_device(endpoint_name: str, db: Session = Depends(get_db)):
     db.delete(device)
     db.commit()
     return Response(status_code=204)
+
+
+@app.post(
+    "/devices/firmware/{endpoint_name}",
+    status_code=202,
+    summary="Upload firmware and start a single-device update",
+    description=(
+        "Uploads a firmware image to Coiote and schedules an update for this device. "
+        "The device must support the LwM2M Firmware Update object (Object 5). "
+        "Firmware updates are disabled unless FOTA_ENABLED=true."
+    ),
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        }
+    },
+)
+async def upload_and_start_firmware_update(
+    endpoint_name: str,
+    request: Request,
+    filename: str = Query(default="firmware.pkg", min_length=1, max_length=128),
+    db: Session = Depends(get_db),
+):
+    if not FOTA_ENABLED:
+        raise HTTPException(status_code=503, detail="Firmware updates are disabled")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", filename) is None:
+        raise HTTPException(status_code=422, detail="Invalid firmware filename")
+    if not filename.lower().endswith(".pkg"):
+        raise HTTPException(status_code=422, detail="Firmware filename must use the .pkg extension")
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/octet-stream":
+        raise HTTPException(status_code=415, detail="Expected application/octet-stream firmware data")
+    try:
+        content_length = int(request.headers.get("content-length", ""))
+    except ValueError:
+        raise HTTPException(status_code=411, detail="Content-Length is required") from None
+    if content_length <= 0:
+        raise HTTPException(status_code=400, detail="Firmware file must not be empty")
+    if content_length > MAX_FIRMWARE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Firmware file exceeds the 100 MiB limit")
+
+    device = db.query(Device).filter(Device.endpoint_name == endpoint_name).first()
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if not device.coiote_device_id:
+        raise HTTPException(status_code=409, detail="Device is not registered in Coiote")
+
+    resource_key = uuid4().hex
+    resource_name = f"nexyn-firmware-{resource_key}"
+    domain = device.domain or "/main/xbrybx34/"
+    try:
+        resource_id = await create_firmware_resource(
+            resource_name, filename, domain
+        )
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        raise fota_request_error("firmware resource creation", error) from None
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Coiote returned an invalid firmware resource") from None
+
+    received_bytes = 0
+
+    async def firmware_stream():
+        nonlocal received_bytes
+        async for chunk in request.stream():
+            received_bytes += len(chunk)
+            if received_bytes > MAX_FIRMWARE_SIZE_BYTES:
+                raise HTTPException(status_code=413, detail="Firmware file exceeds the 100 MiB limit")
+            yield chunk
+
+    try:
+        await upload_firmware_data(resource_id, firmware_stream())
+        if received_bytes != content_length:
+            raise HTTPException(status_code=400, detail="Firmware upload size did not match Content-Length")
+    except (httpx.HTTPStatusError, httpx.RequestError, HTTPException) as error:
+        try:
+            await delete_firmware_resource(resource_id)
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            pass
+        if isinstance(error, HTTPException):
+            raise error
+        raise fota_request_error("firmware file upload", error) from None
+
+    try:
+        task_id = await start_firmware_update(device.coiote_device_id, resource_id)
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        raise fota_request_error("firmware task scheduling", error) from None
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Coiote returned an invalid firmware task") from None
+
+    return {"task_id": task_id, "state": "accepted"}
+
+
+@app.get("/devices/firmware/{endpoint_name}/{task_id}")
+async def get_firmware_update_status(
+    endpoint_name: str, task_id: str, db: Session = Depends(get_db)
+):
+    device = db.query(Device).filter(Device.endpoint_name == endpoint_name).first()
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    if not device.coiote_device_id:
+        raise HTTPException(status_code=409, detail="Device is not registered in Coiote")
+
+    try:
+        report = await get_firmware_task_report(task_id, device.coiote_device_id)
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code == 404:
+            try:
+                error_body = error.response.json()
+            except ValueError:
+                error_body = {}
+            if isinstance(error_body, dict) and error_body.get("code") == 4041:
+                return JSONResponse(
+                    content={"task_id": task_id, "state": "pending"},
+                    status_code=202,
+                )
+            if isinstance(error_body, dict) and error_body.get("code") == 4040:
+                raise HTTPException(status_code=404, detail="Firmware task not found") from None
+        raise coiote_request_error(error) from None
+    except httpx.RequestError as error:
+        raise coiote_request_error(error) from None
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Coiote returned an invalid firmware report") from None
+
+    upstream_status = report.get("status")
+    status = upstream_status if isinstance(upstream_status, str) else "Unknown"
+    normalized_status = status.casefold()
+    if normalized_status in {"success", "succeeded"}:
+        state = "succeeded"
+    elif normalized_status in {"error", "failed", "failure"}:
+        state = "failed"
+    else:
+        state = "in_progress"
+
+    allowed_properties = {
+        "newFirmwareVersion": "new_firmware_version",
+        "oldFirmwareVersion": "old_firmware_version",
+        "result": "result",
+        "resultDetails": "result_details",
+    }
+    firmware_result = {}
+    properties = report.get("properties")
+    if isinstance(properties, list):
+        for item in properties:
+            if isinstance(item, dict) and item.get("name") in allowed_properties:
+                value = item.get("value")
+                if isinstance(value, str):
+                    firmware_result[allowed_properties[item["name"]]] = value[:500]
+
+    summary = report.get("summary")
+    return {
+        "task_id": task_id,
+        "state": state,
+        "status": status,
+        "summary": summary[:500] if isinstance(summary, str) else None,
+        "started_at": report.get("startTime"),
+        "finished_at": report.get("finishTime"),
+        "firmware": firmware_result,
+    }

@@ -1,0 +1,183 @@
+# Device connection lifetime
+
+The lifetime APIs send LwM2M operations through Coiote to the device.
+They do not update a local device field and pretend the device has changed.
+Implementation: [device_lifetime.py](device_lifetime.py).
+
+There are exactly **two application endpoints**:
+
+| Action | Application request | User input |
+|---|---|---|
+| Write | `PATCH /devices/{endpoint_name}/lifetime` | Endpoint name and lifetime in seconds |
+| Read | `POST /devices/{endpoint_name}/lifetime/read` | Endpoint name only; no body |
+
+Each action requires **one application request**. The backend schedules the
+Coiote operation, polls its report, and retrieves the fresh value internally
+before responding. There is no public task-result endpoint or caller polling.
+
+## Setup
+
+Use the existing `COIOTE_BASE_URL`, `COIOTE_USERNAME`, and `COIOTE_PASSWORD`
+backend environment variables. Coiote credentials are never sent to the browser.
+The Coiote account needs permission to read the device data model, schedule
+configuration tasks, and retrieve task reports.
+
+The backend discovers the Server instance from the device's Coiote data model
+(`LwM2M Server.{instance}.Short Server ID`), not a hard-coded instance number.
+If the device has multiple Server instances, set `COIOTE_SHORT_SERVER_ID` to
+the Short Server ID assigned to this Coiote server (1 through 65535).
+The backend matches that value to the reported instance.
+This is not necessarily the instance number.
+
+If no unique instance can be identified, the request returns 409 without
+writing anything. Populate/refresh the Server object in Coiote first.
+The public API does not expose a documented automatic mapping from the Coiote
+connection to a particular Server instance on a multi-server device.
+
+Start the application from the repository directory:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload
+```
+
+Open `http://localhost:8000/docs` and expand **Device lifetime**.
+No separate frontend exists here; Swagger's **Try it out / Execute** controls
+provide the write/read actions.
+
+## Write lifetime
+
+`PATCH /devices/{endpoint_name}/lifetime`
+
+```json
+{"lifetime": 3600}
+```
+
+`endpoint_name` identifies the local device; its saved `coiote_device_id`
+is used in the remote request. Run the existing `/sync-devices` operation
+first if the device exists only in Coiote.
+
+Lifetime must be a JSON integer between 1 and 4294967295 seconds.
+Strings, booleans, fractions, and null are rejected with 422.
+
+The backend submits a new task using
+`POST /api/coiotedm/v3/tasks/configure/{deviceId}?rerunIfExists=false`.
+The operations run sequentially (`batchRequests=false`):
+
+1. Write `LwM2M Server.{instance}.Lifetime`.
+2. Execute `LwM2M Server.{instance}.Registration Update Trigger` so the
+   device can update its registration with the new lifetime.
+3. Read the lifetime back from the device.
+
+The backend waits for the task and readback to complete, then returns **200**
+with the verified lifetime. It never returns `accepted` as the final result.
+If the trigger or read fails after a successful write, the response is **502**
+with `state: failed`; the device may already have changed, so use the read
+endpoint to check it.
+
+## Read action
+
+`POST /devices/{endpoint_name}/lifetime/read`
+
+No request body. This schedules a real device **read** through Coiote, waits for
+completion, and returns **200** with the current `lifetime` in the same response.
+It does not return a previous local snapshot.
+
+In Swagger, execute the read endpoint once with the endpoint name. A frontend
+Read button should make this one application request and display `lifetime`.
+
+## Internal Coiote requests
+
+The backend handles these calls; the application does not need to make them:
+
+1. Read the Coiote data model to discover the correct Server instance.
+2. Schedule the fresh read or write/readback configuration task.
+3. Poll
+`GET /api/coiotedm/v3/taskReports/{taskId}/{deviceId}`.
+4. Only after Coiote reports `Success`, retrieve the lifetime from
+`GET /api/coiotedm/v3/cachedDataModels/{deviceId}?parameters=...`.
+
+The task and cached-data endpoints are separate Coiote APIs; authentication,
+instance discovery, and task-report polling mean there may be more than two
+outbound HTTP requests, but still only **one application request per action**.
+The backend verifies that the resource's `updateTime` is at least the task's `startTime`;
+older cached data is not returned as a confirmed read.
+
+Successful write response:
+
+```json
+{
+  "task_id": "returned-coiote-task-id",
+  "device_id": "remote-device",
+  "resource": "LwM2M Server.3.Lifetime",
+  "operation": "write",
+  "state": "succeeded",
+  "requested_lifetime": 3600,
+  "lifetime": 3600,
+  "matches_requested": true,
+  "observed_at": "2026-11-16T07:00:02Z",
+  "detail": null
+}
+```
+
+For a read-only task, `operation` is `read`, and `requested_lifetime` and
+`matches_requested` are null. `lifetime` is the device-reported value from Coiote.
+The returned task ID is diagnostic metadata only; callers do not need to use it.
+
+## Waiting and timeouts
+
+Both endpoints have a **30-second overall Coiote-operation deadline**, including
+discovery and task submission. The backend polls at one-second intervals using
+asynchronous waits, not a blocking sleep.
+
+| Result | HTTP | Meaning |
+|---|---|---|
+| succeeded | 200 | Fresh device-reported lifetime available |
+| verification_failed | 409 | Fresh read differs from the requested value |
+| failed | 502 | Coiote reports Error or Warning; no verified value returned |
+| timeout | 504 | Coiote did not provide a fresh result before the deadline |
+
+A timeout returns an explicit `detail`, not `accepted` or a stale lifetime.
+Coiote may still execute a submitted task after the HTTP request times out.
+Use the read endpoint to check the current device state before retrying a write.
+Ensure the application's HTTP timeout and proxy timeout exceed 30 seconds.
+
+Task metadata and successful read snapshots are persisted in
+`device_lifetime_tasks`, created automatically on startup. Task IDs are bound
+to the originating local device and Coiote device ID. These records are internal;
+each read endpoint call performs a new read instead of returning an old snapshot.
+Responses disable HTTP caching.
+
+No destructive migration drops any legacy `devices.lifetime` column that may
+already exist. That obsolete local-only field is no longer mapped or returned.
+The duplicate standalone reference implementation has been removed.
+
+## Errors and limitations
+
+- 404: local device not found or remote task deleted.
+- 409: device has no Coiote ID or Server-instance discovery is ambiguous/missing.
+- 422: invalid lifetime input.
+- 502: Coiote task/HTTP/network failure, invalid report/value, or missing result resource.
+- 503: invalid backend Short Server ID configuration.
+- 504: no fresh device response within 30 seconds.
+
+Coiote report code 4041 means the task is not yet executed/transient, so the
+backend keeps waiting internally; code 4040 means the task no longer exists.
+Other upstream errors are not silently retried as pending.
+
+The device must implement the Server object's Lifetime and Registration Update
+Trigger resources. A sleeping/offline device may cause a timeout. A successful
+read is an observation at `observed_at`, not a guarantee no other client changes
+the resource afterward.
+
+Tests in [test_device_lifetime.py](test_device_lifetime.py) mock Coiote HTTP
+traffic and use an isolated SQLite database. They do not update a real device.
+Live-device validation requires a reachable test device and appropriate Coiote
+permissions; no live lifetime write is performed as part of automated tests.
+
+## API reference
+
+- [Coiote API v3](https://eu.iot.avsystem.cloud/apidoc/coiotedm/v3#/)
+- [OpenAPI specification](https://eu.iot.avsystem.cloud/apidoc/coiotedm/v3.json)
+
+The configuration-task endpoint documents the exact resource names, sequential
+operations, and registration-update trigger used here.

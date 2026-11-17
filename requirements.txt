@@ -1,0 +1,7 @@
+fastapi
+httpx
+pydantic>=2,<3
+python-dotenv
+sqlalchemy
+tzdata
+uvicorn

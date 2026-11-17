@@ -39,6 +39,134 @@ class DeviceAPITestCase(unittest.TestCase):
             "psk_key": "00112233445566778899aabbccddeeff",
         }
 
+
+class FirmwareUpdateAPITests(DeviceAPITestCase):
+    def test_firmware_update_is_disabled_by_default(self):
+        with patch("main.FOTA_ENABLED", False):
+            response = self.client.post(
+                "/devices/firmware/test-endpoint",
+                content=b"test-firmware",
+                headers={"content-type": "application/octet-stream"},
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"detail": "Firmware updates are disabled"})
+        self.create.assert_not_called()
+
+    def test_upload_and_update_returns_accepted_task(self):
+        self.client.post("/devices", json=self.payload)
+        with (
+            patch("main.FOTA_ENABLED", True),
+            patch("main.create_firmware_resource", new_callable=AsyncMock) as create_resource,
+            patch("main.upload_firmware_data", new_callable=AsyncMock) as upload,
+            patch("main.start_firmware_update", new_callable=AsyncMock) as start,
+        ):
+            create_resource.return_value = "resource-123"
+            start.return_value = "task-123"
+
+            async def consume_upload(resource_id, content):
+                async for _ in content:
+                    pass
+
+            upload.side_effect = consume_upload
+            response = self.client.post(
+                "/devices/firmware/test-endpoint?filename=demo.pkg",
+                content=b"firmware-bytes",
+                headers={"content-type": "application/octet-stream"},
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json(), {"task_id": "task-123", "state": "accepted"})
+        resource_name, filename, domain = create_resource.call_args.args
+        self.assertTrue(resource_name.startswith("nexyn-firmware-"))
+        self.assertEqual((filename, domain), ("demo.pkg", "/main/xbrybx34/"))
+        upload.assert_awaited_once()
+        start.assert_awaited_once_with("test-endpoint", "resource-123")
+
+    def test_upload_rejects_bin_filename(self):
+        with (
+            patch("main.FOTA_ENABLED", True),
+            patch("main.create_firmware_resource", new_callable=AsyncMock) as create_resource,
+        ):
+            response = self.client.post(
+                "/devices/firmware/test-endpoint?filename=demo.bin",
+                content=b"firmware-bytes",
+                headers={"content-type": "application/octet-stream"},
+            )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(), {"detail": "Firmware filename must use the .pkg extension"}
+        )
+        create_resource.assert_not_awaited()
+
+    def test_resource_forbidden_error_identifies_fota_stage(self):
+        self.client.post("/devices", json=self.payload)
+        request = httpx.Request("POST", "https://coiote.invalid/resources")
+        upstream_response = httpx.Response(403, request=request)
+        error = httpx.HTTPStatusError(
+            "forbidden", request=request, response=upstream_response
+        )
+        with (
+            patch("main.FOTA_ENABLED", True),
+            patch("main.create_firmware_resource", new_callable=AsyncMock) as create_resource,
+        ):
+            create_resource.side_effect = error
+            response = self.client.post(
+                "/devices/firmware/test-endpoint?filename=demo.pkg",
+                content=b"firmware-bytes",
+                headers={"content-type": "application/octet-stream"},
+            )
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json(),
+            {"detail": "Coiote firmware resource creation failed (HTTP 403)"},
+        )
+
+    def test_status_returns_only_allowlisted_firmware_fields(self):
+        self.client.post("/devices", json=self.payload)
+        report = {
+            "status": "Success",
+            "summary": "Firmware update successful",
+            "startTime": "2026-11-12T10:00:00Z",
+            "finishTime": "2026-11-12T10:01:00Z",
+            "properties": [
+                {"name": "newFirmwareVersion", "value": "2.0"},
+                {"name": "result", "value": "SUCCESS"},
+                {"name": "unexpectedSecret", "value": "must not leak"},
+            ],
+        }
+        with patch(
+            "main.get_firmware_task_report", new_callable=AsyncMock
+        ) as get_report:
+            get_report.return_value = report
+            response = self.client.get(
+                "/devices/firmware/test-endpoint/task-123"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "succeeded")
+        self.assertEqual(response.json()["firmware"], {
+            "new_firmware_version": "2.0",
+            "result": "SUCCESS",
+        })
+        self.assertNotIn("unexpectedSecret", response.text)
+
+    def test_status_treats_report_code_4041_as_pending(self):
+        self.client.post("/devices", json=self.payload)
+        request = httpx.Request("GET", "https://coiote.invalid/taskReports/task/test-endpoint")
+        upstream_response = httpx.Response(404, json={"code": 4041}, request=request)
+        error = httpx.HTTPStatusError(
+            "not ready", request=request, response=upstream_response
+        )
+        with patch(
+            "main.get_firmware_task_report", new_callable=AsyncMock
+        ) as get_report:
+            get_report.side_effect = error
+            response = self.client.get(
+                "/devices/firmware/test-endpoint/task-123"
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            response.json(), {"task_id": "task-123", "state": "pending"}
+        )
+
     def tearDown(self):
         self.create_patch.stop()
         self.client.close()
