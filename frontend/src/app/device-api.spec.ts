@@ -1,7 +1,12 @@
 import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { DeviceApi, errorMessage, submissionOperationId } from './device-api';
+import {
+  DeviceApi,
+  errorMessage,
+  isRegistrationLifetimeResult,
+  submissionOperationId,
+} from './device-api';
 
 describe('Existing NEXYN API integration', () => {
   let api: DeviceApi;
@@ -54,7 +59,7 @@ describe('Existing NEXYN API integration', () => {
     expect(errorMessage(error)).not.toContain('SECRET');
   });
 
-  it('maps discovery, live Read, timezone Write and result checks to their exact APIs', async () => {
+  it('maps discovery, live Read and result checks to their exact APIs', async () => {
     const endpoint = 'sensor ?#';
     const url = '/api/devices/sensor%20%3F%23';
     const discovery = api.resources(endpoint);
@@ -68,16 +73,89 @@ describe('Existing NEXYN API integration', () => {
     expect(read.request.body).toEqual({ resource_key: 'Device.0.Manufacturer' });
     read.flush({});
     await reading;
-    const writing = api.writeTimezone(endpoint, 'Etc/UTC');
-    const write = http.expectOne(`${url}/writes`);
-    expect(write.request.method).toBe('POST');
-    expect(write.request.body).toEqual({ resource_key: 'Device.0.Timezone', value: 'Etc/UTC' });
-    write.flush({});
-    await writing;
     const checking = api.operation(endpoint, 'operation ?#');
     const operation = http.expectOne(`${url}/operations/operation%20%3F%23`);
     expect(operation.request.method).toBe('GET');
     operation.flush({});
+    await checking;
+  });
+
+  it('maps registration-lifetime reads and verified writes to their existing routes', async () => {
+    const endpoint = 'sensor ?#';
+    const url = '/api/devices/sensor%20%3F%23';
+    const read = api.readLifetime(endpoint);
+    const reading = http.expectOne(`${url}/lifetime/read`);
+    expect(reading.request.method).toBe('POST');
+    expect(reading.request.body).toBeNull();
+    reading.flush({
+      task_id: 'read-1',
+      device_id: 'remote',
+      resource: 'LwM2M Server.3.Lifetime',
+      operation: 'read',
+      state: 'succeeded',
+      requested_lifetime: null,
+      lifetime: 3600,
+      matches_requested: null,
+      observed_at: '2026-11-16T00:01:00Z',
+    });
+    await read;
+
+    const write = api.writeLifetime(endpoint, 7200);
+    const writing = http.expectOne(`${url}/lifetime`);
+    expect(writing.request.method).toBe('PATCH');
+    expect(writing.request.body).toEqual({ lifetime: 7200 });
+    writing.flush({});
+    await write;
+  });
+
+  it('recognizes a verified lifetime mismatch returned with HTTP 409', () => {
+    expect(
+      isRegistrationLifetimeResult({
+        task_id: 'write-1',
+        device_id: 'remote',
+        resource: 'LwM2M Server.3.Lifetime',
+        operation: 'write',
+        state: 'verification_failed',
+        requested_lifetime: 7200,
+        lifetime: 3600,
+        matches_requested: false,
+        observed_at: '2026-11-16T00:01:00Z',
+      }),
+    ).toBe(true);
+    expect(isRegistrationLifetimeResult({ state: 'verification_failed', lifetime: '3600' })).toBe(
+      false,
+    );
+  });
+
+  it('uses backend-only server setting routes and preserves boolean, integer and binding types', async () => {
+    const url = '/api/devices/sensor%20%3F%23/server-settings';
+    const loading = api.serverSettings('sensor ?#');
+    const list = http.expectOne(url);
+    expect(list.request.method).toBe('GET');
+    list.flush({ settings: [], unresolved_operation: null });
+    await loading;
+    for (const [resourceId, value] of [
+      [6, false],
+      [18, 60],
+      [7, 'U'],
+    ] as const) {
+      const applying = api.writeServerSetting('sensor ?#', resourceId, value);
+      const write = http.expectOne(`${url}/${resourceId}`);
+      expect(write.request.method).toBe('PATCH');
+      expect(write.request.body).toEqual({ value });
+      write.flush({});
+      await applying;
+    }
+    const reading = api.readServerSetting('sensor ?#', 23);
+    const read = http.expectOne(`${url}/23/read`);
+    expect(read.request.method).toBe('POST');
+    expect(read.request.body).toBeNull();
+    read.flush({});
+    await reading;
+    const checking = api.serverSettingOperation('sensor ?#', 'operation ?#');
+    const check = http.expectOne(`${url}/operations/operation%20%3F%23`);
+    expect(check.request.method).toBe('GET');
+    check.flush({});
     await checking;
   });
 
