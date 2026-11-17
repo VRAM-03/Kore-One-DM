@@ -210,7 +210,7 @@ class DeviceLifetimeTests(unittest.TestCase):
         self.assertEqual(self.task_number, 1)
         self.updated = "2026-11-16T06:59:59Z"
         with patch("device_lifetime.LIFETIME_TIMEOUT_SECONDS", 0.03):
-            response = self.read()
+            response = self.write()
         self.assertEqual(response.status_code, 504)
 
     def test_write_readback_mismatch_is_explicit(self):
@@ -222,18 +222,80 @@ class DeviceLifetimeTests(unittest.TestCase):
         self.assertEqual(response.json()["lifetime"], 100)
         self.assertFalse(response.json()["matches_requested"])
 
-    def test_each_read_gets_a_new_device_observation_not_previous_snapshot(self):
+    def test_repeated_read_uses_stored_value_without_any_coiote_requests(self):
         first = self.read().json()
         with self.sessions() as db:
             self.assertEqual(db.get(LifetimeTask, "task-1").confirmed_lifetime, 3600)
         self.requests.clear()
         self.lifetime = "8000"
-        second = self.read().json()
-        self.assertEqual(second["lifetime"], 8000)
-        self.assertNotEqual(second["task_id"], first["task_id"])
+        response = self.read()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), first)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(self.requests, [])
         with self.sessions() as db:
-            self.assertEqual(db.get(LifetimeTask, "task-1").confirmed_lifetime, 3600)
-            self.assertEqual(db.get(LifetimeTask, "task-2").confirmed_lifetime, 8000)
+            self.assertEqual(db.query(LifetimeTask).count(), 1)
+
+    def test_read_uses_latest_write_readback_as_a_read_result(self):
+        self.read()
+        self.lifetime = "8000"
+        self.updated = "2026-11-16T08:00:02Z"
+        written = self.write(8000)
+        self.assertEqual(written.status_code, 200)
+        self.assertEqual(self.task_number, 2)
+        self.requests.clear()
+        response = self.read()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            **written.json(), "operation": "read",
+            "requested_lifetime": None, "matches_requested": None,
+        })
+        self.assertEqual(self.requests, [])
+
+    def test_null_stored_lifetime_falls_back_to_device_and_persists_result(self):
+        with self.sessions() as db:
+            device = db.query(Device).filter_by(endpoint_name="sensor").one()
+            db.add(LifetimeTask(
+                task_id="unconfirmed", local_device_id=device.id,
+                coiote_device_id=device.coiote_device_id,
+                resource="LwM2M Server.3.Lifetime", requested_lifetime=9000,
+            ))
+            db.commit()
+        response = self.read()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["lifetime"], 3600)
+        self.assertEqual(self.task_number, 1)
+        self.requests.clear()
+        self.assertEqual(self.read().json(), response.json())
+        self.assertEqual(self.requests, [])
+
+    def test_stored_lifetime_is_scoped_to_local_and_remote_device_ids(self):
+        for local_endpoint, remote_id in (
+            ("other", "remote-device"), ("sensor", "old-remote-device"),
+        ):
+            with self.subTest(local_endpoint=local_endpoint, remote_id=remote_id):
+                with self.sessions() as db:
+                    db.query(LifetimeTask).delete()
+                    device = db.query(Device).filter_by(
+                        endpoint_name=local_endpoint
+                    ).one()
+                    db.add(LifetimeTask(
+                        task_id="unrelated", local_device_id=device.id,
+                        coiote_device_id=remote_id,
+                        resource="LwM2M Server.3.Lifetime",
+                        confirmed_lifetime=9000,
+                        observed_at=device_lifetime.datetime(
+                            2026, 11, 17, tzinfo=device_lifetime.timezone.utc
+                        ),
+                    ))
+                    db.commit()
+                self.requests.clear()
+                response = self.read()
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json()["lifetime"], 3600)
+                self.assertTrue(any(
+                    request.method == "POST" for request in self.requests
+                ))
 
     def test_multi_server_discovery_never_guesses_instance_zero(self):
         self.servers.append(self.parameter("LwM2M Server.8.Short Server ID", "9"))

@@ -1,4 +1,4 @@
-"""Coiote-backed LwM2M connection lifetime reads and writes."""
+"""Database-first lifetime reads and Coiote-backed lifetime writes."""
 
 import os
 import re
@@ -186,18 +186,37 @@ async def update_device_lifetime(
 
 @router.post(
     "/devices/{endpoint_name}/lifetime/read", response_model=LifetimeResult,
-    summary="Read and return the current device lifetime through Coiote",
+    summary="Read the device lifetime, fetching through Coiote only if missing",
     description=(
-        "Schedules a fresh Coiote device read and retrieves its result internally. "
-        "Requires only the endpoint name. Returns HTTP 504 after 30 seconds."
+        "Returns the latest confirmed lifetime from the Nexyn database."
+        "If no non-null lifetime is stored, reads it from the "
+        "device through Coiote and persists the result. The fallback returns "
+        "HTTP 504 after 30 seconds."
     ),
 )
 async def read_device_lifetime(
     endpoint_name: str, response: Response, db: Session = Depends(get_db)
 ):
-    return await complete_lifetime_request(
-        registered_device(endpoint_name, db), None, response, db
+    device = registered_device(endpoint_name, db)
+    response.headers["Cache-Control"] = "no-store"
+    task = (
+        db.query(LifetimeTask)
+        .filter(
+            LifetimeTask.local_device_id == device.id,
+            LifetimeTask.coiote_device_id == device.coiote_device_id,
+            LifetimeTask.confirmed_lifetime.isnot(None),
+        )
+        .order_by(LifetimeTask.observed_at.desc())
+        .first()
     )
+    if task is not None:
+        return LifetimeResult(
+            task_id=task.task_id, device_id=task.coiote_device_id,
+            resource=task.resource, operation="read", state="succeeded",
+            lifetime=task.confirmed_lifetime,
+            observed_at=task.observed_at.replace(tzinfo=timezone.utc),
+        )
+    return await complete_lifetime_request(device, None, response, db)
 
 
 async def get_task_report(task: LifetimeTask) -> TaskReport | None:
@@ -281,8 +300,9 @@ async def complete_lifetime_request(
             status_code=504,
             detail=(
                 "Timed out waiting for Coiote to return a fresh device lifetime. "
-                "A submitted write may still execute later; read the lifetime "
-                "to check before retrying a write."
+                "A submitted write may still execute later; stored lifetime "
+                "reads may not reflect it. Verify the device state through "
+                "Coiote before retrying a write."
             ),
             headers={"Cache-Control": "no-store"},
         ) from None
