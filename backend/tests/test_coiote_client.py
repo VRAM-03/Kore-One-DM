@@ -4,15 +4,15 @@ from unittest.mock import patch
 
 import httpx
 
-import coiote_client as client
+from backend import coiote_client as client
 
 
 class CoioteTokenTests(unittest.TestCase):
     def setUp(self):
         self.clear_cache()
         self.addCleanup(self.clear_cache)
-        self.post = self.enterContext(patch("coiote_client.httpx.post"))
-        self.clock = self.enterContext(patch("coiote_client.monotonic", return_value=100.0))
+        self.post = self.enterContext(patch("backend.coiote_client.httpx.post"))
+        self.clock = self.enterContext(patch("backend.coiote_client.monotonic", return_value=100.0))
         self.post.return_value = self.auth_response()
 
     def clear_cache(self):
@@ -93,7 +93,7 @@ class CoioteTokenTests(unittest.TestCase):
         self.assertIsNone(client._cached_token)
 
     def test_401_invalidates_without_retry_and_next_call_logs_in(self):
-        with patch("coiote_client.httpx.get") as get:
+        with patch("backend.coiote_client.httpx.get") as get:
             get.return_value = httpx.Response(
                 401, request=httpx.Request("GET", "https://example.invalid/devices")
             )
@@ -124,9 +124,9 @@ class CoioteTokenTests(unittest.TestCase):
         )
         self.post.side_effect = [self.auth_response(), ok]
         with (
-            patch("coiote_client.httpx.get", return_value=ok) as get,
-            patch("coiote_client.httpx.put", return_value=ok) as put,
-            patch("coiote_client.httpx.delete", return_value=ok) as delete,
+            patch("backend.coiote_client.httpx.get", return_value=ok) as get,
+            patch("backend.coiote_client.httpx.put", return_value=ok) as put,
+            patch("backend.coiote_client.httpx.delete", return_value=ok) as delete,
         ):
             client.create_coiote_device("endpoint", "psk", "identity", "aabb", "Name")
             client.list_coiote_devices()
@@ -157,8 +157,8 @@ class CoioteTokenTests(unittest.TestCase):
                         status, request=httpx.Request(method, "https://example.invalid/devices")
                     )
                     with (
-                        patch("coiote_client.get_coiote_token", return_value="test-token"),
-                        patch(f"coiote_client.httpx.{method}", return_value=response) as send,
+                        patch("backend.coiote_client.get_coiote_token", return_value="test-token"),
+                        patch(f"backend.coiote_client.httpx.{method}", return_value=response) as send,
                     ):
                         with self.assertRaises(httpx.HTTPStatusError):
                             operation()
@@ -168,7 +168,7 @@ class CoioteTokenTests(unittest.TestCase):
         response = httpx.Response(
             200, json=[], request=httpx.Request("GET", "https://example.invalid/resources")
         )
-        with patch("coiote_client.httpx.get", return_value=response) as get:
+        with patch("backend.coiote_client.httpx.get", return_value=response) as get:
             self.assertEqual(client.get_coiote_device_resources("id/with space"), [])
             call = get.call_args
             self.assertTrue(call.args[0].endswith(
@@ -201,7 +201,7 @@ class CoioteTokenTests(unittest.TestCase):
             "operations": [{"read": {"key": "Device.0.Manufacturer"}}],
             "name": "nexyn-read-op-1", "batchRequests": False, "executeImmediately": True,
         }})
-        with patch("coiote_client.httpx.get") as get:
+        with patch("backend.coiote_client.httpx.get") as get:
             get.return_value = httpx.Response(
                 200, json={}, request=httpx.Request("GET", "https://example.invalid/report")
             )

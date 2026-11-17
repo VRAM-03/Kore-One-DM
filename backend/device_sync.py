@@ -7,8 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from coiote_client import get_coiote_device_details, list_coiote_devices
-from models import Device
+from .coiote_client import get_coiote_device_details, list_coiote_devices
+from .models import Device
 
 
 def coiote_request_error(error: httpx.HTTPStatusError | httpx.RequestError) -> HTTPException:

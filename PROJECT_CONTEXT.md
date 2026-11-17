@@ -3,9 +3,40 @@
 Goal: Build an industry-oriented PoC backend for K One DM (formerly NEXYN), a connector-based DMP.
 AVSystem Coiote is the first device-management connector. Explain steps for a Python beginner and implement one feature at a time. Prioritize security, privacy, clear errors, and future extensibility.
 
+## Current project structure and operation (November 17)
+
+- `backend/` contains the FastAPI app, Coiote client, synchronization service,
+  database configuration and models; `backend/tests/` contains backend tests.
+  `frontend/` contains the Angular app. The single project README is `README.md`.
+  The root `.env` and existing `nexyn.db` remain in place and ignored.
+- From the repository root, start the backend with
+  `venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000`;
+  the previous `main:app` command no longer applies. Run backend tests with
+  `venv/bin/python -m unittest -q`. `backend/requirements.txt` records the
+  versions used by the current Python virtual environment. The SQLite URL is
+  still relative to the working directory; start from the root to use the
+  existing database. Existing credentials and stored data were not moved.
+- The accidental root npm installation was removed after verifying both Keycloak
+  packages resolve from `frontend/node_modules`. Four unused bundled SVG icons
+  were also removed. The unrelated locally downloaded
+  Keycloak server and its local database were removed at the user's request;
+  Java was left installed. The app uses the existing KORE development SSO server,
+  not that local server.
+- Restructure validation: all 58 backend tests and 33 frontend tests passed,
+  the frontend production build passed, and Pylance reported no syntax errors
+  in the moved modules and tests. The configured SQLite path was verified to
+  resolve to the existing root database. No live SSO or device operation was
+  tested as part of this cleanup.
+- Older dated notes below preserve history and research; the current decisions
+  above and in the following current-status section supersede earlier commands,
+  feature descriptions and test counts. Do not treat historical proposals or
+  observations as current implementation.
+
 Design direction (confirmed November 10):
 - November 16 product direction: present KORE One DM as a connector-independent, super-admin-oriented device-management platform. Shared inventory uses Device name, Onboarding time and Status/Last seen instead of provider-specific record-state labels. Keep provider-specific terminology/configuration in connector-specific areas rather than leaking it into shared platform concepts. Existing `endpoint_name`/provider IDs and API schemas remain unchanged; this is not a backend identifier migration.
-- The header now displays Super admin instead of Developer, with an explicit prototype-only role tooltip. This establishes the pitch/demo perspective, not implemented login, tenant management, authentication, authorization or RBAC. Broader super-admin capabilities require separately agreed implementation scope.
+- The header displays Super admin instead of Developer, with an explicit prototype-only role tooltip. This establishes the pitch/demo perspective; it is not derived from authenticated roles and does not enforce authorization. Tenant management and RBAC require separately agreed implementation scope.
+- November 17 SSO setup: the user specified the existing KORE development SSO, `KORE-CIDP` realm and shared `chts-diagnostic-tool-dev` client, confirmed localhost redirect/origin access, and requested login before opening the app. Angular initializes Keycloak with authorization code/PKCE and fails startup visibly if initialization fails or authentication is absent; the existing shared client is not modified. No API tokens are attached or validated, no logout UI or role enforcement is implemented, and FastAPI remains directly accessible. Browser login must be verified by the user against the actual SSO and shared-client configuration.
+- SSO implementation verification: production build and all 33 frontend tests passed, including startup rejection for unauthenticated or failed Keycloak initialization. Manual initialization is intentional because the installed keycloak-angular initializer catches initialization errors; propagating them avoids starting the UI after failed authentication. This test does not verify connectivity or login against the KORE SSO server.
 - November 16 header/navigation refinement: moved Super Admin into its own banner below Kore One DM Prototype. Added desktop collapse/expand to a 68px icon rail with accessible names, tooltips and expanded-state control; mobile keeps its independent full-width drawer. Collapse state is page-session-only, not persisted. Removed Backend connected from the global header; retained accurately labelled Platform API diagnostics beside Check connection in the connector view so that action still has visible feedback. Existing request errors/health checks and backend APIs remain unchanged.
 - Latest logo/layout request: sidebar shows only the existing O image plus One, compact and vertically aligned at the top-left as in the user's latest screenshot; remove DM Prototype from sidebar text only. Collapsed sidebar shows O alone. Registration lifetime is above Timezone, with compact width-limited rows and smaller gaps instead of large bordered whitespace. Lifetime remains a draft; timezone wiring is preserved.
 - Latest device-table decision: default sorting is newest-created-first, toggled on Created time (UTC), not alphabetic device name. Compare actual creation timestamps with ID tie-breaker; missing creation times stay last in both directions. Onboarding time (UTC) means `first_registered_at`, explicitly confirmed by user, not local creation or latest registration. Replace Connection history with Status showing stored `last_seen_at`/Last seen (UTC), not inferred online/offline. Remove the old onboarding-state badge and duplicate Last seen column; missing contact says No contact recorded.
@@ -116,7 +147,7 @@ Verified from the public OpenAPI specification, not from live task execution:
 - Event handler guide: https://iotdevzone.avsystem.com/Coiote_IoT_DM/API_documentation/Guides/Send_data_outside_application/
 - Onboarding/observation guide: https://iotdevzone.avsystem.com/Coiote_IoT_DM/API_documentation/Guides/Basic_onboarding/ . This guide includes bulk examples and an inconsistent `POST /devices/{id}` listing; use OpenAPI `PUT /devices/{id}` for device updates, matching the existing connector.
 
-### Candidate priority order (recommendation, awaiting user selection)
+### Historical candidate priority order
 
 1. Inspect safe device object/resource definitions and selected cached values to establish paths/operations supported by the actual client.
 2. Live single-resource Read plus task/result tracking, initially manufacturer or model.
@@ -124,14 +155,16 @@ Verified from the public OpenAPI specification, not from live task execution:
 4. Write a safe, reversible demo resource and verify it through a subsequent Read; Execute a safe supported command only with approval.
 5. Receive webhook device/telemetry events to reduce repetitive full inventory polling.
 6. Single-device firmware operations only after compatibility, permissions and recovery planning; campaigns later.
-Do not implement any of these until the user prioritizes. Groups remain on hold.
+Resource discovery, live Read and timezone-only verified Write have since been
+implemented as described above; the remaining candidates require user selection
+and approval. Groups remain on hold.
 
 Environment: WSL Ubuntu, project folder ~/nexyn-backend, Python virtual environment, FastAPI/Uvicorn, SQLAlchemy, SQLite, HTTPX, python-dotenv.
 
-Files: main.py, models.py, database.py, coiote_client.py, .env, .gitignore.
+Files are now organized under `backend/`; `.env` and `.gitignore` remain at the repository root.
 Never put real credentials in chat or source code. .env is gitignored.
 
-Implemented:
+Implementation history (dated entries may describe functionality that later changed):
 - November 16 local device loading: removed automatic full Coiote inventory/detail refresh from list and individual-device GETs. Both read SQLite only, retain credential-free response shapes and `Cache-Control: no-store`, and preserve stored metadata timestamps. New-device details safely return `coiote_snapshot: null` when no metadata fetch exists. Unknown endpoints return 404 without importing devices. UI now says Reload list/Reload details and explicitly labels the last Coiote metadata refresh. Explicit legacy sync, create/rename/delete provider calls and live-operation behavior remain intact.
 - November 16 pending-Read check: inspected persisted recent operations and checked one existing firmware Read result through the running backend; it returned pending with null value/completion time. A Coiote task ID is stored, but no successful device response is confirmed. No new Read/Write task was submitted. Do not equate this with proof the client is offline; task/report diagnosis remains separate from the loading optimization.
 - November 16 device page and timezone configuration: added Angular `/devices/{endpoint}` routing with Overview, Live data and Settings, replacing the detail drawer. Manual Reads expose manufacturer/model/firmware/timezone values only after successful results. The explicitly approved timezone-only Write API performs Write then Read-back and persists the operation; matching values alone mark it verified. Legacy operations migrate additively. Read-before-Write, pending/uncertainty guards, manual result checking and stale-route-response protection are covered by the current 27 frontend/56 backend tests; production build passed. Existing live backend requires restart. No live device command was sent; provider mapping/permission verification remains a manual step.
@@ -143,7 +176,7 @@ Implemented:
 - November 16 frontend: user approved Angular under `frontend/` on `d-communication`, device list/search/create/detail/friendly-name rename/delete/explicit sync only, NEXYN branding with the supplied KORE-style enterprise layout, SVG icons and subtle droplet/ripple transitions. No new backend API endpoints, CORS changes, group UI, live-operation UI, login or CMP capabilities were added. Existing uncommitted backend work was preserved; no commit/push performed.
 - Frontend uses a standalone Angular app with strict TypeScript/template checking, typed HttpClient integration, reactive forms, native CRUD dialogs, a dedicated device-details route, responsive collapsible sidebar, local search/creation-time sorting/pagination, actual inventory-derived summary counts, and stored creation/first-registration/last-contact UTC columns. It never labels unknown reachability as online/offline. Inventory errors clear old rows rather than displaying them as freshly fetched.
 - Create supports PSK and no-security test modes; validates nonblank endpoints/identity and even-length hex, preserves exact credentials, uses password fields, clears secrets on close and uncertain failure, and does not store them in browser storage. After uncertain network/5xx create outcomes, repeat submission is blocked until the user closes and verifies records. Rename changes friendly name only; delete requires typing the exact endpoint and explains remote-first deletion/client-not-stopped behavior. No automatic retries or polling.
-- Angular's development proxy forwards `/api/*` to existing FastAPI at `127.0.0.1:8000`, stripping `/api`; these are frontend proxy URLs, NOT newly introduced backend routes. Start backend normally, then `cd frontend && npm ci && npm start`, open `http://localhost:4200`. Use Linux Node/npm in WSL (Windows npm cannot reliably work from the WSL filesystem). See frontend/README.md for prerequisites, safety and production reverse-proxy requirements.
+- Angular's development proxy forwards `/api/*` to existing FastAPI at `127.0.0.1:8000`, stripping `/api`; these are frontend proxy URLs, NOT newly introduced backend routes. Start backend as described at the top, then `cd frontend && npm ci && npm start`, open `http://localhost:4200`. Use Linux Node/npm in WSL (Windows npm cannot reliably work from the WSL filesystem). See README.md for prerequisites, safety and production reverse-proxy requirements.
 - Lucide SVG icons and their ISC license are bundled locally under frontend/public/icons; the NEXYN droplet mark/network illustration are original CSS/SVG, not copied screenshot logos or personal/account data. Motion respects prefers-reduced-motion. No external icon/font/analytics requests are introduced.
 - November 16 frontend validation: strict production build passed; 13 Angular UI/API tests passed; all 50 existing Python tests passed. Browser checks against an isolated in-memory mock API verified inventory/search/detail/create/rename/delete confirmation/sync, mobile navigation, secret input types and reduced-motion behavior; the real backend was not running. Development proxy was verified using the mock's health/inventory. No live Coiote reads/writes or device commands were sent. Temporary verification servers were stopped afterward. Actual frontend-to-live-backend CRUD remains a user manual test.
 - November 11 live Read implementation (account-untested; user chose manual /docs verification): `POST /devices/{endpoint_name}/reads` accepts `{"resource_key":"Device.0.Manufacturer"}` (also instance-0 Model Number/Firmware Version). It validates the local provider identity and verifies that the stored safe resource catalogue lists Read support BEFORE submission. This catalogue is a safety/preflight check, not the live result.
@@ -202,14 +235,20 @@ Security/data-handling status:
 
 Verified codebase notes:
 - Runtime in the workspace virtual environment: Python 3.14.4, FastAPI 0.162.0, Pydantic 2.14.2.
-- Source files are `main.py`, `models.py`, `database.py`, `coiote_client.py`, and `device_sync.py`. `test_main.py` contains unittest/TestClient regression tests using isolated in-memory databases and mocked Coiote calls; `test_coiote_client.py` covers connector/token behavior. Run `venv/bin/python -m unittest test_coiote_client test_main -v`. No dependency manifest was found at the workspace root during earlier inspection.
+- Source files are `backend/main.py`, `backend/models.py`, `backend/database.py`, `backend/coiote_client.py`, and `backend/device_sync.py`. Tests in `backend/tests/` use isolated in-memory databases and mocked Coiote calls. Run `venv/bin/python -m unittest -q` from the repository root. Python dependencies are listed in `backend/requirements.txt`.
 - Git was initialized and the user reported pushing to https://github.com/VRAM-03/nexyn-backend in November 11 conversation. Connector preparation was implemented on the existing `d-communication` branch (initially clean); no assistant commit/push was performed. Use feature branches and review before merging to main.
 - Live Coiote authentication and list/detail reads are verified. On November 10 the user reported successful live DELETE and PATCH friendly-name tests through NEXYN. These are user-reported successes, not additional assistant-run verification; live failure/recovery cases remain unverified. Do not copy credentials into chat or source.
 - The verified device-detail response exposes `firstRegisterTime`, `lastRegisterTime`, `lastContactTime`, and `lastSessionTime`, but no explicit connection/status field. `last_seen_at` uses `lastContactTime`, not GET time. A separate documented Coiote interface is needed to establish current reachability. This refresh is latest Coiote metadata, not proof that a device is running.
-- The PoC uses one inventory read plus one detail read per remote device for each GET/sync, including single-device GETs. The connector now reuses valid tokens within each process. Large inventories still need verified pagination, batching and performance work before deployment.
+- Explicit full sync uses one inventory read plus one detail read per remote device. List and single-device GETs are SQLite-only, as described above. The connector reuses valid tokens within each process. Large inventories still need verified pagination, batching and performance work before deployment.
 
-Next:
-1. The user connected local ID 2 (`nexyn-test-device-02`) with the installed Anjay demo to `coaps://eu.iot.avsystem.cloud:5684` and reported Registered in Coiote. Registration timestamps were confirmed through live reads. Verify a documented current connection-state interface before replacing `unknown` with more specific states.
-2. Basic live update/delete success testing is complete based on the user's November 10 reports. Keep failure-path regression coverage; live failure/recovery cases remain unverified.
-3. Group create/list and error cases passed user-reported manual testing. ALL further group work is on hold; preserve existing local groups. Use the saved device capability/API lookup above and await the user's priority selection. Task/report contracts have been researched; actual account/device access for new operations still needs a focused check when selected.
-4. Address secure PSK storage, API access control, and registration recovery before real deployment.
+## Next considerations (await user priorities)
+
+1. Manually verify SSO login against the existing KORE development client. Backend
+   token validation, authorization, a real Super Admin role and logout remain
+   unimplemented; frontend sign-in does not secure direct API access.
+2. Verify actual device Read and timezone Write/read-back with an appropriately
+   registered test device and account. A pending task is not a successful device
+   operation or proof the device is offline.
+3. Investigate documented device reachability before presenting current online
+   status; preserve existing local-only groups and pause further group work.
+4. Address secure PSK storage and registration recovery before real deployment.

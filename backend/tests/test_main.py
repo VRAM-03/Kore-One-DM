@@ -8,9 +8,9 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-import main
-from database import initialize_database
-from models import Device, DeviceOperation, Group
+from backend import main
+from backend.database import initialize_database
+from backend.models import Device, DeviceOperation, Group
 
 
 class DeviceAPITestCase(unittest.TestCase):
@@ -29,7 +29,7 @@ class DeviceAPITestCase(unittest.TestCase):
 
         main.app.dependency_overrides[main.get_db] = get_test_db
         self.client = TestClient(main.app)
-        self.create_patch = patch("main.create_coiote_device")
+        self.create_patch = patch("backend.main.create_coiote_device")
         self.create = self.create_patch.start()
         self.create.return_value = {"id": "test-endpoint"}
         self.payload = {
@@ -49,7 +49,7 @@ class DeviceAPITestCase(unittest.TestCase):
 class DeviceResourceTests(DeviceAPITestCase):
     def setUp(self):
         super().setUp()
-        self.remote = self.enterContext(patch("main.get_coiote_device_resources"))
+        self.remote = self.enterContext(patch("backend.main.get_coiote_device_resources"))
         self.remote.return_value = [
             {"path": "Device.0.Manufacturer", "resourceId": 0,
              "operations": ["Read"], "type": "String", "value": "stored manufacturer"},
@@ -69,8 +69,8 @@ class DeviceResourceTests(DeviceAPITestCase):
 
     def test_discovery_filters_values_and_sensitive_resources_without_writes(self):
         with (
-            patch("device_sync.list_coiote_devices") as inventory,
-            patch("device_sync.get_coiote_device_details") as details,
+            patch("backend.device_sync.list_coiote_devices") as inventory,
+            patch("backend.device_sync.get_coiote_device_details") as details,
         ):
             response = self.client.get("/devices/test-endpoint/resources")
         self.assertEqual(response.status_code, 200)
@@ -159,13 +159,13 @@ class DeviceResourceTests(DeviceAPITestCase):
 class DeviceReadTests(DeviceAPITestCase):
     def setUp(self):
         super().setUp()
-        self.resources = self.enterContext(patch("main.get_coiote_device_resources"))
+        self.resources = self.enterContext(patch("backend.main.get_coiote_device_resources"))
         self.resources.return_value = [{
             "path": "Device.0.Manufacturer", "resourceId": 0,
             "type": "String", "operations": ["Read"],
         }]
-        self.submit = self.enterContext(patch("main.submit_coiote_read", return_value="task:1"))
-        self.report = self.enterContext(patch("main.get_coiote_task_report"))
+        self.submit = self.enterContext(patch("backend.main.submit_coiote_read", return_value="task:1"))
+        self.report = self.enterContext(patch("backend.main.get_coiote_task_report"))
         self.report.return_value = {
             "taskId": "task:1", "deviceId": "remote/id",
             "status": "Success", "finishTime": "2026-11-11T10:00:00Z",
@@ -350,15 +350,15 @@ class DeviceReadTests(DeviceAPITestCase):
 class DeviceWriteTests(DeviceAPITestCase):
     def setUp(self):
         super().setUp()
-        self.resources = self.enterContext(patch("main.get_coiote_device_resources"))
+        self.resources = self.enterContext(patch("backend.main.get_coiote_device_resources"))
         self.resources.return_value = [{
             "path": "Device.0.Timezone", "resourceId": 15,
             "type": "String", "operations": ["Read", "Write"],
         }]
         self.submit = self.enterContext(patch(
-            "main.submit_coiote_timezone_write", return_value="task:tz"
+            "backend.main.submit_coiote_timezone_write", return_value="task:tz"
         ))
-        self.report = self.enterContext(patch("main.get_coiote_task_report"))
+        self.report = self.enterContext(patch("backend.main.get_coiote_task_report"))
         self.report.return_value = {
             "taskId": "task:tz", "deviceId": "remote/id", "status": "Success",
             "finishTime": "2026-11-16T07:00:00Z",
@@ -462,10 +462,10 @@ class GroupAPITests(DeviceAPITestCase):
             db.add(Device(endpoint_name="existing-device"))
             db.commit()
         with (
-            patch("device_sync.list_coiote_devices") as remote_list,
-            patch("device_sync.get_coiote_device_details") as remote_detail,
-            patch("main.update_coiote_device") as remote_update,
-            patch("main.delete_coiote_device") as remote_delete,
+            patch("backend.device_sync.list_coiote_devices") as remote_list,
+            patch("backend.device_sync.get_coiote_device_details") as remote_detail,
+            patch("backend.main.update_coiote_device") as remote_update,
+            patch("backend.main.delete_coiote_device") as remote_delete,
         ):
             self.assertEqual(self.client.get("/groups").json(), [])
             first = self.client.post("/groups", json={"name": "  Building A Sensors  "})
@@ -611,8 +611,8 @@ class DeviceCreateValidationTests(DeviceAPITestCase):
 class DeviceRefreshTests(DeviceAPITestCase):
     def setUp(self):
         super().setUp()
-        self.list_patch = patch("device_sync.list_coiote_devices")
-        self.details_patch = patch("device_sync.get_coiote_device_details")
+        self.list_patch = patch("backend.device_sync.list_coiote_devices")
+        self.details_patch = patch("backend.device_sync.get_coiote_device_details")
         self.list_devices = self.list_patch.start()
         self.details = self.details_patch.start()
         self.list_devices.return_value = ["remote-id"]
@@ -904,7 +904,7 @@ class DeviceRefreshTests(DeviceAPITestCase):
 
     def test_patch_and_delete_keep_remote_first_behavior_and_renamed_response(self):
         self.seed()
-        with patch("main.update_coiote_device") as update:
+        with patch("backend.main.update_coiote_device") as update:
             response = self.client.patch(
                 "/devices/test-endpoint", json={"friendly_name": "Renamed"}
             )
@@ -912,7 +912,7 @@ class DeviceRefreshTests(DeviceAPITestCase):
             self.assertEqual(response.json()["onboarding_status"], "coiote_record_created")
             self.assertNotIn("status", response.json())
             update.assert_called_once_with("remote-id", "Renamed")
-        with patch("main.delete_coiote_device") as delete:
+        with patch("backend.main.delete_coiote_device") as delete:
             delete.side_effect = httpx.ConnectError("secret")
             self.assertEqual(
                 self.client.delete("/devices/test-endpoint").status_code, 502

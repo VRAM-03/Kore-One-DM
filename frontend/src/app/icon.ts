@@ -9,7 +9,6 @@ export type IconName =
   | 'search'
   | 'plus'
   | 'refresh-cw'
-  | 'arrow-right'
   | 'arrow-left'
   | 'chevron-left'
   | 'chevron-right'
@@ -24,9 +23,6 @@ export type IconName =
   | 'circle-check'
   | 'circle-alert'
   | 'menu'
-  | 'server'
-  | 'network'
-  | 'arrow-up-right'
   | 'database'
   | 'check'
   | 'loader-circle';
