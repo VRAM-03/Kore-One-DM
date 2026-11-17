@@ -39,3 +39,14 @@ def initialize_database(db_engine: Engine) -> None:
                 connection.execute(
                     text(f"ALTER TABLE devices ADD COLUMN {name} {sql_type}")
                 )
+        operation_columns = {
+            column["name"] for column in inspect(connection).get_columns("device_operations")
+        }
+        for name, sql_type in {
+            "kind": "VARCHAR NOT NULL DEFAULT 'read'",
+            "requested_value": "VARCHAR",
+        }.items():
+            if name not in operation_columns:
+                connection.execute(
+                    text(f"ALTER TABLE device_operations ADD COLUMN {name} {sql_type}")
+                )

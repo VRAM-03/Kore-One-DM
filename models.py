@@ -10,6 +10,23 @@ class Group(Base):
     name = Column(String, unique=True, nullable=False)
 
 
+class DeviceOperation(Base):
+    __tablename__ = "device_operations"
+
+    id = Column(String, primary_key=True)
+    device_id = Column(Integer, nullable=False, index=True)
+    coiote_device_id = Column(String, nullable=False)
+    resource_key = Column(String, nullable=False)
+    kind = Column(String, nullable=False, default="read")
+    requested_value = Column(String, nullable=True)
+    task_id = Column(String, nullable=True)
+    status = Column(String, nullable=False)
+    value = Column(String, nullable=True)
+    error = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class Device(Base):
     __tablename__ = "devices"
 

@@ -1,0 +1,263 @@
+<section class="page-enter">
+  <a class="back-link" routerLink="/"><app-icon name="arrow-left" /> Devices</a>
+  <div class="device-page-heading">
+    <div>
+      <h1>{{ details()?.local?.friendly_name || endpoint() }}</h1>
+      <p class="endpoint">{{ endpoint() }}</p>
+    </div>
+    <button
+      class="button quiet"
+      (click)="loadDetails()"
+      [disabled]="loading()"
+      title="Reload stored details; does not refresh Coiote"
+    >
+      <app-icon name="refresh-cw" /> Reload details
+    </button>
+  </div>
+  <nav class="section-nav" aria-label="Device sections">
+    <a [routerLink]="['/devices', endpoint()]" fragment="overview">Overview</a>
+    <a [routerLink]="['/devices', endpoint()]" fragment="settings">Settings &amp; configuration</a>
+  </nav>
+
+  <section id="overview">
+    <h2>Overview</h2>
+    @if (pageError()) {
+      <p class="form-error" role="alert">{{ pageError() }}</p>
+    } @else if (loading()) {
+      <p role="status">Loading device details…</p>
+    } @else if (details(); as detail) {
+      <dl class="detail-grid overview-grid">
+        <div>
+          <dt>Local ID</dt>
+          <dd>{{ detail.local.id }}</dd>
+        </div>
+        <div>
+          <dt>Coiote device ID</dt>
+          <dd>{{ detail.local.coiote_device_id || '—' }}</dd>
+        </div>
+        <div>
+          <dt>Security mode</dt>
+          <dd>{{ detail.local.security_mode || '—' }}</dd>
+        </div>
+        <div>
+          <dt>Onboarding</dt>
+          <dd>{{ detail.local.onboarding_status?.replaceAll('_', ' ') || '—' }}</dd>
+        </div>
+        <div>
+          <dt>Connection history</dt>
+          <dd>
+            {{
+              detail.local.connection_status === 'unknown'
+                ? 'Reachability unknown'
+                : detail.local.connection_status?.replaceAll('_', ' ') || 'Not refreshed'
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>Created (UTC)</dt>
+          <dd>
+            {{ detail.local.created_at ? (detail.local.created_at | date: 'medium' : 'UTC') : '—' }}
+          </dd>
+        </div>
+        <div>
+          <dt>First registered (UTC)</dt>
+          <dd>
+            {{
+              detail.local.first_registered_at
+                ? (detail.local.first_registered_at | date: 'medium' : 'UTC')
+                : '—'
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>Last registered (UTC)</dt>
+          <dd>
+            {{
+              detail.local.last_registered_at
+                ? (detail.local.last_registered_at | date: 'medium' : 'UTC')
+                : '—'
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>Last seen (UTC)</dt>
+          <dd>
+            {{
+              detail.local.last_seen_at ? (detail.local.last_seen_at | date: 'medium' : 'UTC') : '—'
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>Last Coiote metadata refresh (UTC)</dt>
+          <dd>
+            {{
+              detail.local.refreshed_at ? (detail.local.refreshed_at | date: 'medium' : 'UTC') : '—'
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>Connector type</dt>
+          <dd>{{ detail.coiote_snapshot?.connector_type || '—' }}</dd>
+        </div>
+        <div>
+          <dt>Domain</dt>
+          <dd>{{ detail.coiote_snapshot?.domain || '—' }}</dd>
+        </div>
+      </dl>
+    }
+  </section>
+
+  @if (resourceLoading()) {
+    <p class="metadata-note" role="status">Checking device resources…</p>
+  }
+  @if (resourceError()) {
+    <div class="form-error" role="alert">
+      <span>{{ resourceError() }}</span>
+      <button class="button secondary" (click)="loadResources()" [disabled]="resourceLoading()">
+        Retry resources
+      </button>
+    </div>
+  }
+
+  <section id="settings">
+    <h2>Settings &amp; configuration</h2>
+    <div class="settings-card lifetime-card">
+      <div class="configuration-heading" (keydown.escape)="lifetimeInfoOpen.set(false)">
+        <h3 class="configuration-title"><app-icon name="clock" /> Registration lifetime</h3>
+        <button
+          class="icon-button lifetime-info-toggle"
+          type="button"
+          aria-label="About registration lifetime"
+          title="About registration lifetime"
+          aria-controls="lifetime-info"
+          [attr.aria-expanded]="lifetimeInfoOpen()"
+          (click)="lifetimeInfoOpen.set(!lifetimeInfoOpen())"
+        >
+          <app-icon name="circle-help" />
+        </button>
+        <div id="lifetime-info" class="lifetime-info-panel" [hidden]="!lifetimeInfoOpen()">
+          <p>
+            Lifetime is the registration validity period, in seconds, for a LwM2M server. The client
+            renews its registration with an Update before it expires.
+          </p>
+          <p>
+            Shorter lifetimes generally mean more registration traffic and power use. Longer
+            lifetimes allow a longer gap before registration expires. Lifetime is not a
+            sensor-reporting interval or proof that the device is currently online.
+          </p>
+          <p>
+            AVSystem's Anjay example uses a 60-second lifetime and shows Updates about every 30
+            seconds. The exact Update schedule depends on the client and transport settings.
+          </p>
+          <p id="lifetime-preview-note">Not read from, saved to or sent to the device.</p>
+          <a
+            href="https://docs.avsystem.com/hubfs/Anjay_Docs/BasicClient/BC-MandatoryObjects.html#server-object"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            AVSystem documentation <app-icon name="external-link" />
+          </a>
+        </div>
+      </div>
+      <div class="configuration-editor">
+        <label class="field" for="lifetime-seconds">
+          Lifetime (seconds)
+          <input
+            id="lifetime-seconds"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="e.g. 60"
+            [formControl]="lifetimeDraft"
+            aria-describedby="lifetime-preview-note"
+          />
+        </label>
+        <button
+          class="button primary"
+          type="button"
+          disabled
+          title="Lifetime read/write is not connected"
+        >
+          <app-icon name="check" /> Apply to device
+        </button>
+        <button
+          class="button quiet"
+          type="button"
+          [disabled]="lifetimeDraft.value === null"
+          (click)="lifetimeDraft.reset()"
+        >
+          Discard
+        </button>
+      </div>
+    </div>
+    <div class="settings-card">
+      <h3 class="configuration-title">Timezone</h3>
+      <p class="metadata-note">
+        Changes apply to the client's LwM2M setting, not your computer's OS timezone.
+      </p>
+      <div class="current-setting">
+        <span>Last verified timezone</span>
+        <strong>{{ readings()[timezoneKey]?.value ?? 'Not read' }}</strong>
+        @if (readings()[timezoneKey]; as reading) {
+          <span class="reading-time">{{ reading.completed_at | date: 'medium' : 'UTC' }} UTC</span>
+        }
+        <div class="resource-actions">
+          <button
+            class="button secondary"
+            (click)="readResource(timezoneKey)"
+            [disabled]="busy(timezoneKey) || !supports(timezoneKey, 'Read')"
+          >
+            Read timezone
+          </button>
+          @if (operationIds()[timezoneKey] && unresolved(timezoneKey)) {
+            <button
+              class="button quiet"
+              (click)="checkResult(timezoneKey)"
+              [disabled]="processing()[timezoneKey]"
+            >
+              Check result
+            </button>
+          }
+        </div>
+      </div>
+      <form [formGroup]="timezoneForm" (ngSubmit)="writeTimezone()">
+        <label class="field">
+          Timezone
+          <input
+            formControlName="timezone"
+            placeholder="e.g. Etc/UTC"
+            maxlength="31"
+            [readOnly]="
+              busy(timezoneKey) || !readings()[timezoneKey] || !supports(timezoneKey, 'Write')
+            "
+          />
+        </label>
+        <button
+          class="button primary"
+          type="submit"
+          [disabled]="
+            busy(timezoneKey) ||
+            !readings()[timezoneKey] ||
+            !supports(timezoneKey, 'Write') ||
+            timezoneForm.invalid ||
+            timezoneForm.controls.timezone.value.trim() === readings()[timezoneKey]?.value
+          "
+        >
+          <app-icon name="check" /> Apply to device
+        </button>
+      </form>
+      @if (operations()[timezoneKey] || unconfirmed()[timezoneKey] || processing()[timezoneKey]) {
+        <p class="operation-state" role="status">{{ operationLabel(timezoneKey) }}</p>
+      }
+      @if (operations()[timezoneKey]?.error; as error) {
+        <p class="operation-error" role="alert">{{ error }}</p>
+      }
+      @if (errors()[timezoneKey]; as error) {
+        <p class="operation-error" role="alert">{{ error }}</p>
+      }
+      @if (!resourceLoading() && !resourceError() && !supports(timezoneKey, 'Write')) {
+        <p class="metadata-note">Timezone is not exposed as writable by this device.</p>
+      }
+    </div>
+  </section>
+</section>
