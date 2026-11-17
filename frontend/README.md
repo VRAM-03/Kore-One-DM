@@ -32,8 +32,8 @@ npm start
 Open **http://localhost:4200**.
 
 The development proxy forwards `/api/*` to `http://127.0.0.1:8000`, removing
-the `/api` prefix. Restart the backend after pulling changes so the lifetime API
-and additive database migration are loaded. No CORS changes are required.
+the `/api` prefix. Restart the backend after pulling changes so the approved
+timezone Write route and additive database migration are loaded. No CORS changes are required.
 If your backend uses a different address, change `proxy.conf.json` and restart
 Angular. The API-documentation link targets the default backend address.
 
@@ -68,64 +68,21 @@ Angular. The API-documentation link targets the default backend address.
 - Click an endpoint to open `/devices/{endpoint}` with Overview and
   Settings & configuration sections. Overview shows stored administrative details, registration
   timestamps and a filtered stored Coiote snapshot, not live resource values.
-- The Timezone section is not shown in this frontend. Backend resource,
-  timezone Read and timezone Write APIs are unchanged.
-- All nine editable Server-object resources are grouped under **LwM2M server**.
-  The arrow on the right collapses or expands the section without clearing drafts,
-  results, or pending checks. It starts expanded for each device.
-- Registration lifetime can be read with Show current lifetime and changed with
-  Apply to device. The display is the latest confirmed backend value and its
-  observation time; the backend contacts the device only when it has no stored
-  confirmed value. Writes are shown as applied only after the backend verifies
-  the device read-back. If a write outcome is unknown, the UI blocks resubmission.
+- Read timezone explicitly, then use Check result to retrieve the operation outcome. Resource discovery
+  checks Coiote's stored model capabilities; it is not itself a live Read.
+- Read the device timezone before editing it. Apply to device submits the
+  approved timezone-only Write followed by Read-back verification. The UI shows
+  Applied and verified only after the backend confirms a matching returned value.
 - Lifetime (seconds) is an editable, page-local draft in Settings & configuration.
-  It appears in a compact, width-limited layout without large
+  It appears above Timezone in a compact, width-limited layout without large
   surrounding card borders.
-  Discard clears the draft, as does opening another device. The info icon beside
+  Its Apply action is disabled; it is not read, persisted or sent to the device.
+  Discard clears it, as does opening another device. The info icon beside
   Registration lifetime explains its purpose and links to AVSystem's
   [Anjay Server Object documentation](https://docs.avsystem.com/hubfs/Anjay_Docs/BasicClient/BC-MandatoryObjects.html#server-object).
   Lifetime controls registration validity, not sensor-reporting frequency or a
   verified online status. The manufacturer/model/firmware Attributes section has
   been removed from the UI; backend resource and Read APIs are unchanged.
-- The same LwM2M server section includes the other eight editable fields from the
-  supplied Server-object view: Notification storing (/6), Binding (/7), Initial
-  registration delay timer (/14), Communication retry count (/17), Communication
-  retry timer (/18), Communication sequence delay timer (/19), Communication
-  sequence retry count (/20), and Mute Send (/23). Lifetime (/1) keeps its existing
-  API and controls within this section. No Disable, Bootstrap Request, or other executable command
-  is exposed.
-- Server settings load automatically under LwM2M server when opening a device;
-  there is no separate Load/Reload server settings button. The backend discovers
-  the configured server instance and each
-  resource's actual Read/Write permissions through the backend. Absent or
-  non-writable fields are unavailable; they are not assumed writable from a
-  screenshot. Last observed values include their timestamps and may be stale.
-  Read from device schedules a fresh Read. Boolean selectors preserve true/false,
-  numeric fields accept whole numbers from 0 to 4294967295, and Binding accepts
-  a device-supported transport code (for example U). The backend enforces types,
-  ranges and the resource allowlist again.
-- Applying a server communication setting requires a valid value, with no
-  acknowledgement checkbox. Per-setting guidance remains visible. The backend
-  persists the operation before submission and schedules
-  Write then Read. Pending operations are checked automatically at two-second
-  intervals (up to 30 checks per submission, recovery, or manual check), stopping
-  on completion, errors, navigation, or page destruction. Checks only retrieve
-  results; they never resubmit a device write or read. Check result remains
-  available after automatic checks pause. Only a successful
-  task and fresh matching read-back display Applied and verified. Failed,
-  mismatched, pending and unconfirmed submissions are distinct states.
-  Results show their read-back value and observation time; a successful write
-  does not guarantee that the value cannot change again later.
-  Only one of these eight setting operations can be unresolved per device.
-  Opening or refreshing the device page recovers and reconciles a persisted
-  pending operation, returning a just-completed result and releasing its lock.
-  The backend also reconciles an existing operation before rejecting a new
-  submission as blocked. A completed write no longer stays pending until the user
-  finds Check result. Pending delivery to a sleeping device can take minutes;
-  pending is not failure, and additional operations remain blocked until resolved.
-  A submission with no confirmed provider task ID stays blocked and requires
-  connector-side investigation; reloading is not proof that the write failed.
-  The existing lifetime API and its registration-update behavior are unchanged.
 - Rename the friendly name only.
 - Delete with an exact endpoint-name confirmation. This can delete the remote
   Coiote record too; it does not stop the running device client.
@@ -142,12 +99,10 @@ Angular. The API-documentation link targets the default backend address.
 | `GET /api/devices/{endpoint}`    | `GET /devices/{endpoint}`    |
 | `PATCH /api/devices/{endpoint}`  | `PATCH /devices/{endpoint}`  |
 | `DELETE /api/devices/{endpoint}` | `DELETE /devices/{endpoint}` |
-| `POST /api/devices/{endpoint}/lifetime/read` | `POST /devices/{endpoint}/lifetime/read` |
-| `PATCH /api/devices/{endpoint}/lifetime` | `PATCH /devices/{endpoint}/lifetime` |
-| `GET /api/devices/{endpoint}/server-settings` | `GET /devices/{endpoint}/server-settings` |
-| `POST /api/devices/{endpoint}/server-settings/{resourceId}/read` | `POST /devices/{endpoint}/server-settings/{resourceId}/read` |
-| `PATCH /api/devices/{endpoint}/server-settings/{resourceId}` | `PATCH /devices/{endpoint}/server-settings/{resourceId}` |
-| `GET /api/devices/{endpoint}/server-settings/operations/{id}` | `GET /devices/{endpoint}/server-settings/operations/{id}` |
+| `GET /api/devices/{endpoint}/resources` | `GET /devices/{endpoint}/resources` |
+| `POST /api/devices/{endpoint}/reads` | `POST /devices/{endpoint}/reads` |
+| `POST /api/devices/{endpoint}/writes` | `POST /devices/{endpoint}/writes` (approved addition) |
+| `GET /api/devices/{endpoint}/operations/{id}` | `GET /devices/{endpoint}/operations/{id}` |
 
 ## Important behavior
 
@@ -174,13 +129,25 @@ Angular. The API-documentation link targets the default backend address.
   A new device without a metadata fetch has a null Coiote snapshot/timestamps.
 - Failed local inventory loads show an error rather than presenting old rows as
   successfully reloaded.
-- Device-page loading reads local administrative details and automatically
-  discovers server settings through the backend, without submitting device
-  commands. It does not discover provider resources for timezone controls.
-  Lifetime requests are made only through the explicit lifetime actions.
-  Bounded result polling starts only
-  for a known pending server-setting operation; no automatic device-command
-  retries or continuous inventory/resource polling are performed by the frontend.
+- Device-page loading makes local administrative/detail and provider
+  resource-discovery GETs independently. Discovery still contacts Coiote for
+  safe model capabilities but cannot hold up administrative details.
+  No live Read or Write is sent until the user requests it.
+- Pending or unconfirmed operations block another submission for that resource
+  in the current page. Check result is manual; no background polling or automatic
+  retries. Result-fetch failures retain the unresolved state. An uncertain
+  submission without an operation ID cannot be safely retried from that page.
+- Operations are persisted on the backend, but page operation state is not
+  restored after navigation/reload. The backend rejects a known unresolved
+  timezone Write with its operation ID, allowing manual checking. This guard
+  covers sequential requests, not atomic concurrent submission. Do not blindly
+  resubmit after an unknown outcome.
+- Timezone uses the IANA name in `Device.0.Timezone` (for example `Etc/UTC` or
+  `Asia/Kolkata`), limited to 31 UTF-8 bytes for the Anjay demo. Both Read and Write
+  capability must be exposed. Account permissions/model mapping still need
+  verification with the actual client. Unsupported resources show unavailable.
+  This changes the client's LwM2M resource, not the host OS; the demo may reset it
+  on restart. A successful Read proves contact only at its completion time.
 - Create/update responses can have null or older metadata-fetch timestamps.
   They are displayed as returned. Reload does not update those timestamps.
 - A create failure may leave a locally saved record. On network/5xx uncertainty,
@@ -205,7 +172,7 @@ npm test -- --watch=false
 
 Tests cover existing API methods/payloads, backend reconnection, search/pagination, credential validation
 and clearing, uncertain submissions, delete confirmation, failure handling,
-details, routing, registration-lifetime and server communication controls, verified settings,
+details, routing, manual operation checks, Read-before-Write, verified settings,
 uncertainty without retries, stale-response isolation, and inventory refresh.
 They use mocks and do not contact Coiote.
 

@@ -18,7 +18,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from database import engine, Base, get_db, initialize_database
 from device_lifetime import router as lifetime_router
-from device_server_settings import router as server_settings_router
 from device_time import router as time_router
 from device_sync import coiote_request_error, refresh_devices
 from models import Device, DeviceOperation, Group
@@ -43,7 +42,6 @@ initialize_database(engine)
 
 app = FastAPI()
 app.include_router(lifetime_router)
-app.include_router(server_settings_router)
 app.include_router(time_router)
 FOTA_ENABLED = os.getenv("FOTA_ENABLED", "false").strip().lower() == "true"
 MAX_FIRMWARE_SIZE_BYTES = 100 * 1024 * 1024

@@ -95,37 +95,6 @@ h2 {
 .settings-card + .settings-card {
   margin-top: 8px;
 }
-.server-group-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  max-width: 760px;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 12px;
-}
-.server-group-heading h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-.server-group-toggle.expanded app-icon {
-  transform: rotate(90deg);
-}
-.server-group-toggle:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-.server-setting-card .configuration-editor {
-  margin-top: 12px;
-}
-.server-operation {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-}
 .settings-card .metadata-note {
   margin: 0 0 10px;
 }

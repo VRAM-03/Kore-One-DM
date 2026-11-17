@@ -70,53 +70,6 @@ export interface DeviceOperation {
   completed_at: string | null;
 }
 
-export interface RegistrationLifetimeResult {
-  task_id: string;
-  device_id: string;
-  resource: string;
-  operation: 'read' | 'write';
-  state: 'succeeded' | 'failed' | 'verification_failed';
-  requested_lifetime: number | null;
-  lifetime: number | null;
-  matches_requested: boolean | null;
-  observed_at: string | null;
-}
-
-export type ServerSettingValue = boolean | number | string;
-
-export interface ServerSetting {
-  resource_id: number;
-  label: string;
-  data_type: 'boolean' | 'integer' | 'string';
-  unit: string | null;
-  minimum: number | null;
-  maximum: number | null;
-  warning: string | null;
-  resource: string | null;
-  readable: boolean;
-  writable: boolean;
-  value: ServerSettingValue | null;
-  observed_at: string | null;
-}
-
-export interface ServerSettingOperation {
-  id: string;
-  resource_id: number;
-  resource: string;
-  kind: 'read' | 'write';
-  state: 'pending' | 'submission_unknown' | 'succeeded' | 'failed' | 'verification_failed';
-  requested_value: ServerSettingValue | null;
-  value: ServerSettingValue | null;
-  observed_at: string | null;
-  error: string | null;
-}
-
-export interface ServerSettingsResponse {
-  settings: ServerSetting[];
-  unresolved_operation: ServerSettingOperation | null;
-  completed_operation?: ServerSettingOperation | null;
-}
-
 @Injectable({ providedIn: 'root' })
 export class DeviceApi {
   private readonly http = inject(HttpClient);
@@ -160,55 +113,12 @@ export class DeviceApi {
     );
   }
 
-  readLifetime(endpoint: string): Promise<RegistrationLifetimeResult> {
+  writeTimezone(endpoint: string, value: string): Promise<DeviceOperation> {
     return firstValueFrom(
-      this.http
-        .post<RegistrationLifetimeResult>(`${this.deviceUrl(endpoint)}/lifetime/read`, null)
-        .pipe(timeout(35000)),
-    );
-  }
-
-  writeLifetime(endpoint: string, lifetime: number): Promise<RegistrationLifetimeResult> {
-    return firstValueFrom(
-      this.http
-        .patch<RegistrationLifetimeResult>(`${this.deviceUrl(endpoint)}/lifetime`, { lifetime })
-        .pipe(timeout(35000)),
-    );
-  }
-
-  serverSettings(endpoint: string): Promise<ServerSettingsResponse> {
-    return firstValueFrom(
-      this.http.get<ServerSettingsResponse>(`${this.deviceUrl(endpoint)}/server-settings`),
-    );
-  }
-
-  readServerSetting(endpoint: string, resourceId: number): Promise<ServerSettingOperation> {
-    return firstValueFrom(
-      this.http.post<ServerSettingOperation>(
-        `${this.deviceUrl(endpoint)}/server-settings/${resourceId}/read`,
-        null,
-      ),
-    );
-  }
-
-  writeServerSetting(
-    endpoint: string,
-    resourceId: number,
-    value: ServerSettingValue,
-  ): Promise<ServerSettingOperation> {
-    return firstValueFrom(
-      this.http.patch<ServerSettingOperation>(
-        `${this.deviceUrl(endpoint)}/server-settings/${resourceId}`,
-        { value },
-      ),
-    );
-  }
-
-  serverSettingOperation(endpoint: string, id: string): Promise<ServerSettingOperation> {
-    return firstValueFrom(
-      this.http.get<ServerSettingOperation>(
-        `${this.deviceUrl(endpoint)}/server-settings/operations/${encodeURIComponent(id)}`,
-      ),
+      this.http.post<DeviceOperation>(`${this.deviceUrl(endpoint)}/writes`, {
+        resource_key: 'Device.0.Timezone',
+        value,
+      }),
     );
   }
 
@@ -229,30 +139,6 @@ export class DeviceApi {
   private deviceUrl(endpoint: string): string {
     return `${this.base}/devices/${encodeURIComponent(endpoint)}`;
   }
-}
-
-export function isRegistrationLifetimeResult(value: unknown): value is RegistrationLifetimeResult {
-  if (typeof value !== 'object' || value === null) return false;
-  const result = value as Record<string, unknown>;
-  const isLifetime = (candidate: unknown): boolean =>
-    candidate === null ||
-    (typeof candidate === 'number' &&
-      Number.isSafeInteger(candidate) &&
-      candidate >= 1 &&
-      candidate <= 4294967295);
-  return (
-    typeof result['task_id'] === 'string' &&
-    typeof result['device_id'] === 'string' &&
-    typeof result['resource'] === 'string' &&
-    (result['operation'] === 'read' || result['operation'] === 'write') &&
-    (result['state'] === 'succeeded' ||
-      result['state'] === 'failed' ||
-      result['state'] === 'verification_failed') &&
-    isLifetime(result['requested_lifetime']) &&
-    isLifetime(result['lifetime']) &&
-    (result['matches_requested'] === null || typeof result['matches_requested'] === 'boolean') &&
-    (result['observed_at'] === null || typeof result['observed_at'] === 'string')
-  );
 }
 
 export function errorMessage(error: unknown): string {
