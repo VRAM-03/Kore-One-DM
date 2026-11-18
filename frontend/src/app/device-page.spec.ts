@@ -6,7 +6,6 @@ import { afterEach, vi } from 'vitest';
 import {
   DeviceApi,
   DeviceDetails,
-  DeviceOperation,
   RegistrationLifetimeResult,
   ServerSetting,
   ServerSettingOperation,
@@ -81,18 +80,6 @@ const pendingSetting: ServerSettingOperation = {
   observed_at: null,
   error: null,
 };
-const pendingTimezone: DeviceOperation = {
-  id: 'timezone-1',
-  resource_key: 'Device.0.Timezone',
-  kind: 'read',
-  requested_value: null,
-  status: 'pending',
-  value: null,
-  error: null,
-  created_at: '2026-11-16T00:00:00Z',
-  completed_at: null,
-};
-
 describe('Device communication page', () => {
   afterEach(() => vi.useRealTimers());
 
@@ -106,29 +93,6 @@ describe('Device communication page', () => {
     const params = new BehaviorSubject(convertToParamMap({ endpoint: 'lab' }));
     const api = {
       detail: vi.fn().mockResolvedValue(detail),
-      resources: vi.fn().mockResolvedValue({
-        resources: [
-          {
-            key: 'Device.0.Timezone',
-            resource_id: 15,
-            data_type: 'String',
-            operations: ['Read', 'Write'],
-          },
-        ],
-      }),
-      read: vi.fn().mockResolvedValue(pendingTimezone),
-      operation: vi.fn().mockResolvedValue({
-        ...pendingTimezone,
-        status: 'succeeded',
-        value: 'Etc/UTC',
-        completed_at: '2026-11-16T00:01:00Z',
-      }),
-      writeTimezone: vi.fn().mockResolvedValue({
-        ...pendingTimezone,
-        id: 'timezone-write',
-        kind: 'write',
-        requested_value: 'Asia/Kolkata',
-      }),
       readLifetime: vi.fn().mockResolvedValue(lifetimeRead),
       deviceSettings: vi.fn().mockResolvedValue([
         {
@@ -218,8 +182,6 @@ describe('Device communication page', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     expect(api.detail).toHaveBeenCalledWith('lab');
-    expect(api.resources).toHaveBeenCalledWith('lab');
-    expect(api.read).not.toHaveBeenCalled();
     expect(api.readLifetime).toHaveBeenCalledExactlyOnceWith('lab');
     expect(api.writeLifetime).not.toHaveBeenCalled();
     expect(api.serverSettings).toHaveBeenCalledExactlyOnceWith('lab');
@@ -320,58 +282,6 @@ describe('Device communication page', () => {
     expect(api.rebootDevice).not.toHaveBeenCalled();
   });
 
-  it('retains the timezone read-before-write flow beside the server settings', async () => {
-    const { fixture, page, api, element } = setup();
-    await fixture.whenStable();
-    page.timezoneForm.controls.timezone.setValue('Asia/Kolkata');
-    await page.writeTimezone();
-    expect(api.writeTimezone).not.toHaveBeenCalled();
-
-    await page.readResource(page.timezoneKey);
-    await page.checkResult(page.timezoneKey);
-    expect(page.timezoneForm.controls.timezone.value).toBe('Etc/UTC');
-    page.timezoneForm.controls.timezone.setValue('Asia/Kolkata');
-    await page.writeTimezone();
-    expect(api.writeTimezone).toHaveBeenCalledWith('lab', 'Asia/Kolkata');
-    expect(page.readings()[page.timezoneKey]?.value).toBe('Etc/UTC');
-
-    api.operation.mockResolvedValueOnce({
-      ...pendingTimezone,
-      id: 'timezone-write',
-      kind: 'write',
-      requested_value: 'Asia/Kolkata',
-      status: 'succeeded',
-      value: 'Asia/Kolkata',
-      completed_at: '2026-11-16T00:02:00Z',
-    });
-    await page.checkResult(page.timezoneKey);
-    fixture.detectChanges();
-    expect(element.querySelector('.timezone-card strong')?.textContent).toBe('Asia/Kolkata');
-    expect(page.operationLabel(page.timezoneKey)).toBe('Applied and verified');
-    expect(api.writeServerSetting).not.toHaveBeenCalled();
-  });
-
-  it('does not present a mismatched timezone write as verified', async () => {
-    const { fixture, page, api } = setup();
-    await fixture.whenStable();
-    await page.readResource(page.timezoneKey);
-    await page.checkResult(page.timezoneKey);
-    page.timezoneForm.controls.timezone.setValue('Asia/Kolkata');
-    await page.writeTimezone();
-    api.operation.mockResolvedValueOnce({
-      ...pendingTimezone,
-      id: 'timezone-write',
-      kind: 'write',
-      requested_value: 'Asia/Kolkata',
-      status: 'succeeded',
-      value: 'Etc/UTC',
-      completed_at: '2026-11-16T00:02:00Z',
-    });
-    await page.checkResult(page.timezoneKey);
-    expect(page.readings()[page.timezoneKey]?.value).toBe('Etc/UTC');
-    expect(page.unconfirmed()[page.timezoneKey]).toBe(true);
-  });
-
   it('omits Attributes and shows registration-lifetime guidance and controls', async () => {
     const { fixture, page, api, element } = setup();
     await fixture.whenStable();
@@ -386,8 +296,9 @@ describe('Device communication page', () => {
     );
     expect(settingTitles).toEqual(['Registration lifetime', ...serverSettings.map((s) => s.label)]);
     expect(element.querySelector('#lwm2m-server-heading')?.textContent).toBe('LwM2M server');
-    expect(element.querySelector('#settings')?.textContent).toContain('Timezone');
-    expect(element.querySelector('#settings')?.textContent).toContain('Read timezone');
+    expect(element.querySelector('#settings')?.textContent?.toLowerCase()).not.toContain(
+      'timezone',
+    );
     expect(element.querySelector('#settings')?.textContent).not.toContain('Check result');
     expect(element.textContent).not.toContain('Manufacturer');
     expect(element.textContent).not.toContain('Model number');
@@ -632,7 +543,9 @@ describe('Device communication page', () => {
     fixture.detectChanges();
     expect(api.serverSettings).toHaveBeenCalledWith('lab');
     expect(element.textContent).not.toContain('Bootstrap');
-    expect(element.querySelector('.timezone-card')?.textContent).toContain('Timezone');
+    expect(element.querySelector('#settings')?.textContent?.toLowerCase()).not.toContain(
+      'timezone',
+    );
     const setting = page.serverSettings()[7];
     expect(setting.value).toBe(false);
     chooseSetting(element, 23, 'view');

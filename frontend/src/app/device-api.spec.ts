@@ -60,36 +60,6 @@ describe('Existing NEXYN API integration', () => {
     expect(errorMessage(error)).not.toContain('SECRET');
   });
 
-  it('maps discovery, live Read and result checks to their exact APIs', async () => {
-    const endpoint = 'sensor ?#';
-    const url = '/api/devices/sensor%20%3F%23';
-    const discovery = api.resources(endpoint);
-    const resources = http.expectOne(`${url}/resources`);
-    expect(resources.request.method).toBe('GET');
-    resources.flush({ resources: [] });
-    await discovery;
-    const reading = api.read(endpoint, 'Device.0.Manufacturer');
-    const read = http.expectOne(`${url}/reads`);
-    expect(read.request.method).toBe('POST');
-    expect(read.request.body).toEqual({ resource_key: 'Device.0.Manufacturer' });
-    read.flush({});
-    await reading;
-    const writing = api.writeTimezone(endpoint, 'Asia/Kolkata');
-    const write = http.expectOne(`${url}/writes`);
-    expect(write.request.method).toBe('POST');
-    expect(write.request.body).toEqual({
-      resource_key: 'Device.0.Timezone',
-      value: 'Asia/Kolkata',
-    });
-    write.flush({});
-    await writing;
-    const checking = api.operation(endpoint, 'operation ?#');
-    const operation = http.expectOne(`${url}/operations/operation%20%3F%23`);
-    expect(operation.request.method).toBe('GET');
-    operation.flush({});
-    await checking;
-  });
-
   it('fetches the activity estimate without triggering inventory sync', async () => {
     const activity = firstValueFrom(api.activity());
     const request = http.expectOne('/api/device-activity');

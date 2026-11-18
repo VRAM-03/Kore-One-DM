@@ -194,6 +194,13 @@ class FirmwareUpdateAPITests(DeviceAPITestCase):
             response.json(), {"task_id": "task-123", "state": "pending"}
         )
 
+
+class DeviceTimeRouteRemovalTests(DeviceAPITestCase):
+    def test_device_time_route_is_not_registered(self):
+        routes = {route.path for route in main.app.routes if hasattr(route, "path")}
+        self.assertNotIn("/devices/{endpoint_name}/time", routes)
+
+
 class DeviceResourceTests(DeviceAPITestCase):
     def setUp(self):
         super().setUp()

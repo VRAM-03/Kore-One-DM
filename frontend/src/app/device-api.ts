@@ -44,38 +44,6 @@ export interface CreateDevice {
   psk_key?: string;
 }
 
-export type ResourceKey =
-  | 'Device.0.Manufacturer'
-  | 'Device.0.Model Number'
-  | 'Device.0.Firmware Version'
-  | 'Device.0.Timezone';
-
-export interface DeviceResource {
-  key: string;
-  resource_id: number;
-  data_type: string;
-  operations: ('Read' | 'Write' | 'Execute')[];
-}
-
-export interface DeviceOperation {
-  id: string;
-  resource_key: ResourceKey;
-  kind: 'read' | 'write';
-  requested_value: string | null;
-  status:
-    | 'submitting'
-    | 'submission_unknown'
-    | 'rejected'
-    | 'pending'
-    | 'succeeded'
-    | 'failed'
-    | 'not_found';
-  value: string | null;
-  error: string | null;
-  created_at: string;
-  completed_at: string | null;
-}
-
 export interface RegistrationLifetimeResult {
   task_id: string;
   device_id: string;
@@ -171,29 +139,6 @@ export class DeviceApi {
     return firstValueFrom(this.http.delete<void>(this.deviceUrl(endpoint)));
   }
 
-  resources(endpoint: string): Promise<{ resources: DeviceResource[] }> {
-    return firstValueFrom(
-      this.http.get<{ resources: DeviceResource[] }>(`${this.deviceUrl(endpoint)}/resources`),
-    );
-  }
-
-  read(endpoint: string, resourceKey: ResourceKey): Promise<DeviceOperation> {
-    return firstValueFrom(
-      this.http.post<DeviceOperation>(`${this.deviceUrl(endpoint)}/reads`, {
-        resource_key: resourceKey,
-      }),
-    );
-  }
-
-  writeTimezone(endpoint: string, value: string): Promise<DeviceOperation> {
-    return firstValueFrom(
-      this.http.post<DeviceOperation>(`${this.deviceUrl(endpoint)}/writes`, {
-        resource_key: 'Device.0.Timezone',
-        value,
-      }),
-    );
-  }
-
   readLifetime(endpoint: string): Promise<RegistrationLifetimeResult> {
     return firstValueFrom(
       this.http
@@ -265,14 +210,6 @@ export class DeviceApi {
     return firstValueFrom(
       this.http.get<ServerSettingOperation>(
         `${this.deviceUrl(endpoint)}/server-settings/operations/${encodeURIComponent(id)}`,
-      ),
-    );
-  }
-
-  operation(endpoint: string, id: string): Promise<DeviceOperation> {
-    return firstValueFrom(
-      this.http.get<DeviceOperation>(
-        `${this.deviceUrl(endpoint)}/operations/${encodeURIComponent(id)}`,
       ),
     );
   }

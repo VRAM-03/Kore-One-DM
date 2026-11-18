@@ -118,17 +118,12 @@ Angular. The API-documentation link targets the default backend address.
 - Click an endpoint to open `/devices/{endpoint}`. Overview shows stored
   administrative details, registration timestamps and a filtered Coiote snapshot.
   Settings & configuration opens a separate view for LwM2M server and Device
-  resources, with Timezone below the settings workspace.
-- Read timezone explicitly, then use Check result to retrieve the operation outcome. Resource discovery
-  checks Coiote's stored model capabilities; it is not itself a live Read.
-- Read the device timezone before editing it. Apply to device submits a
-  timezone Write followed by Read-back verification. The UI shows
-  Applied and verified only after the backend confirms a matching returned value.
+  resources.
 - Registration lifetime and eight allowlisted communication settings are under a
-  collapsible LwM2M server section; Timezone remains a separate setting. Lifetime
-  can be read and written, with fresh read-back verification for writes. Reads
-  reuse the latest stored confirmed observation when available, which may be
-  stale. See [DEVICE_LIFETIME.md](DEVICE_LIFETIME.md) for timeouts and safety.
+  collapsible LwM2M server section. Lifetime can be read and written, with fresh
+  read-back verification for writes. Reads reuse the latest stored confirmed
+  observation when available, which may be stale. See [DEVICE_LIFETIME.md](DEVICE_LIFETIME.md)
+  for timeouts and safety.
 - The server section includes notification storing, binding, initial registration
   delay, communication retry count/timer, sequence delay/retry count and Mute Send.
   Settings are available according to discovered device capabilities; changes to
@@ -158,10 +153,6 @@ Angular. The API-documentation link targets the default backend address.
 | `GET /api/devices/{endpoint}`    | `GET /devices/{endpoint}`    |
 | `PATCH /api/devices/{endpoint}`  | `PATCH /devices/{endpoint}`  |
 | `DELETE /api/devices/{endpoint}` | `DELETE /devices/{endpoint}` |
-| `GET /api/devices/{endpoint}/resources` | `GET /devices/{endpoint}/resources` |
-| `POST /api/devices/{endpoint}/reads` | `POST /devices/{endpoint}/reads` |
-| `POST /api/devices/{endpoint}/writes` | `POST /devices/{endpoint}/writes` (approved addition) |
-| `GET /api/devices/{endpoint}/operations/{id}` | `GET /devices/{endpoint}/operations/{id}` |
 | `POST /api/devices/{endpoint}/lifetime/read` | `POST /devices/{endpoint}/lifetime/read` |
 | `PATCH /api/devices/{endpoint}/lifetime` | `PATCH /devices/{endpoint}/lifetime` |
 | `GET /api/devices/{endpoint}/server-settings` | `GET /devices/{endpoint}/server-settings` |
@@ -197,33 +188,20 @@ Angular. The API-documentation link targets the default backend address.
   A new device without a metadata fetch has a null Coiote snapshot/timestamps.
 - Failed local inventory loads show an error rather than presenting old rows as
   successfully reloaded.
-- Device-page loading makes local administrative/detail and provider
-  resource-discovery GETs independently. Discovery still contacts Coiote for
-  safe model capabilities but cannot hold up administrative details.
-  No live Read or Write is sent until the user requests it.
-- Timezone results are checked manually; unresolved or unconfirmed operations
-  block another submission on the current page. Its page state is not restored
-  after navigation, although backend operations are persisted. The backend blocks
-  known unresolved timezone Writes sequentially, not atomically under concurrency.
+- Device-page loading fetches local administrative details. Device resource
+  discovery and direct resource Read/Write controls are not exposed in the UI.
 - Server-setting operations are persisted and recovered on page load. Pending
   results are checked automatically at two-second intervals, up to 30 checks,
   with manual checks available afterward. Checks do not resubmit a command.
   Only one of the eight server-setting operations may be unresolved per device.
   A submission without a confirmed task ID remains blocked and requires
   investigation; do not blindly retry after an unknown outcome.
-- The backend also has a `/devices/{endpoint}/time` API for timezone, UTC offset
-  and current time. Firmware upload and status endpoints exist but firmware
-  submissions are disabled unless `FOTA_ENABLED=true`; they have no frontend UI.
+- Firmware upload and status endpoints exist but firmware submissions are
+  disabled unless `FOTA_ENABLED=true`; they have no frontend UI.
   An enabled firmware upload requires a known stored connector domain; refresh
   the device metadata if it is missing rather than assuming an account domain.
   Firmware operations require separate review, device compatibility and safe
   recovery planning. The current backend is not authorized for public exposure.
-- Timezone uses the IANA name in `Device.0.Timezone` (for example `Etc/UTC` or
-  `Asia/Kolkata`), limited to 31 UTF-8 bytes for the Anjay demo. Both Read and Write
-  capability must be exposed. Account permissions/model mapping still need
-  verification with the actual client. Unsupported resources show unavailable.
-  This changes the client's LwM2M resource, not the host OS; the demo may reset it
-  on restart. A successful Read proves contact only at its completion time.
 - Create/update responses can have null or older metadata-fetch timestamps.
   They are displayed as returned. Reload does not update those timestamps.
 - A create failure may leave a locally saved record. On network/5xx uncertainty,
