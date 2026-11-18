@@ -32,6 +32,7 @@ describe('Device workspace', () => {
       rename: vi.fn().mockResolvedValue({ ...device, friendly_name: 'Updated' }),
       delete: vi.fn().mockResolvedValue(undefined),
       resources: vi.fn().mockResolvedValue({ resources: [] }),
+      serverSettings: vi.fn().mockResolvedValue({ settings: [], unresolved_operation: null }),
     };
     TestBed.configureTestingModule({
       imports: [App],
@@ -406,11 +407,35 @@ describe('Device workspace', () => {
     expect(element.querySelector('.inventory-toolbar')).toBeNull();
     expect(api.detail).toHaveBeenCalledWith('lab-device');
     expect(api.list).toHaveBeenCalledTimes(1);
-    element.querySelector<HTMLAnchorElement>('.section-nav a[href$="#settings"]')!.click();
+    expect(element.querySelector('#overview')).not.toBeNull();
+    expect(element.querySelector('#settings')).toBeNull();
+    expect(api.serverSettings).not.toHaveBeenCalled();
+    const settingsLink = element.querySelector<HTMLAnchorElement>(
+      '.section-nav a[href$="?view=settings"]',
+    )!;
+    settingsLink.click();
     await fixture.whenStable();
-    expect(TestBed.inject(Router).url).toBe('/devices/lab-device#settings');
+    expect(TestBed.inject(Router).url).toBe('/devices/lab-device?view=settings');
+    expect(settingsLink.getAttribute('aria-current')).toBe('page');
+    expect(element.querySelector('#overview')).toBeNull();
+    expect(element.querySelector('#settings #lwm2m-server-heading')).not.toBeNull();
+    expect(api.serverSettings).toHaveBeenCalledExactlyOnceWith('lab-device');
     expect(api.detail).toHaveBeenCalledTimes(1);
-    expect(api.resources).toHaveBeenCalledTimes(1);
+    expect(api.resources).not.toHaveBeenCalled();
+    const lifetime = element.querySelector<HTMLInputElement>('#lifetime-seconds')!;
+    lifetime.value = '120';
+    lifetime.dispatchEvent(new Event('input', { bubbles: true }));
+    const overviewLink = element.querySelector<HTMLAnchorElement>('.section-nav a')!;
+    overviewLink.click();
+    await fixture.whenStable();
+    expect(TestBed.inject(Router).url).toBe('/devices/lab-device');
+    expect(overviewLink.getAttribute('aria-current')).toBe('page');
+    expect(element.querySelector('#overview')).not.toBeNull();
+    expect(element.querySelector('#settings')).toBeNull();
+    settingsLink.click();
+    await fixture.whenStable();
+    expect(element.querySelector<HTMLInputElement>('#lifetime-seconds')?.value).toBe('120');
+    expect(api.serverSettings).toHaveBeenCalledTimes(1);
     app.navigate('devices');
     await fixture.whenStable();
     fixture.detectChanges();

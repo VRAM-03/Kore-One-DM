@@ -40,11 +40,14 @@ h1 {
   border-bottom: 3px solid transparent;
 }
 .section-nav a:hover,
-.section-nav a:focus-visible {
+.section-nav a:focus-visible,
+.section-nav a[aria-current='page'] {
   border-bottom-color: var(--blue);
 }
+.section-nav a[aria-current='page'] {
+  font-weight: 600;
+}
 section[id] {
-  scroll-margin-top: 20px;
   margin-bottom: 32px;
 }
 h2 {

@@ -1,9 +1,10 @@
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, DestroyRef, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Component, DestroyRef, effect, inject, signal, untracked } from '@angular/core';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { map } from 'rxjs';
 import {
   DeviceApi,
   DeviceDetails,
@@ -30,6 +31,11 @@ export class DevicePage {
   private generation = 0;
   private serverCheckTimer: ReturnType<typeof setTimeout> | null = null;
   private serverChecksRemaining = 0;
+  private serverSettingsLoaded = false;
+  readonly showingSettings = toSignal(
+    this.route.queryParamMap.pipe(map((params) => params.get('view') === 'settings')),
+    { initialValue: false },
+  );
   readonly endpoint = signal('');
   readonly details = signal<DeviceDetails | null>(null);
   readonly loading = signal(false);
@@ -76,6 +82,7 @@ export class DevicePage {
       this.lifetimeWriteUnconfirmed.set(false);
       this.lifetimeInfoOpen.set(false);
       this.serverSectionOpen.set(true);
+      this.serverSettingsLoaded = false;
       this.serverSettings.set([]);
       this.serverSettingsProcessing.set(false);
       this.serverSettingsError.set('');
@@ -87,7 +94,12 @@ export class DevicePage {
         return;
       }
       void this.loadDetails();
-      void this.loadServerSettings();
+    });
+    effect(() => {
+      const endpoint = this.endpoint();
+      if (this.showingSettings() && endpoint && !this.serverSettingsLoaded) {
+        untracked(() => void this.loadServerSettings());
+      }
     });
   }
 
@@ -125,6 +137,7 @@ export class DevicePage {
     try {
       const result = await this.api.serverSettings(this.endpoint());
       if (generation !== this.generation) return;
+      this.serverSettingsLoaded = true;
       this.serverSettings.set(result.settings);
       const operation = result.unresolved_operation ?? result.completed_operation;
       if (operation) this.applyServerOperation(operation);

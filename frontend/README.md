@@ -65,8 +65,9 @@ Angular. The API-documentation link targets the default backend address.
   Endpoint and friendly name are shared fields. Deselecting the connector clears
   secrets and resets security mode to PSK. Create supports PSK or no-security
   test mode.
-- Click an endpoint to open `/devices/{endpoint}` with Overview and
-  Settings & configuration sections. Overview shows stored administrative details, registration
+- Click an endpoint to open Overview at `/devices/{endpoint}`. Choose
+  Settings & configuration to open a separate view at `/devices/{endpoint}?view=settings`.
+  Only the selected view is displayed. Overview shows stored administrative details, registration
   timestamps and a filtered stored Coiote snapshot, not live resource values.
 - The Timezone section is not shown in this frontend. Backend resource,
   timezone Read and timezone Write APIs are unchanged.
@@ -94,7 +95,7 @@ Angular. The API-documentation link targets the default backend address.
   sequence retry count (/20), and Mute Send (/23). Lifetime (/1) keeps its existing
   API and controls within this section. No Disable, Bootstrap Request, or other executable command
   is exposed.
-- Server settings load automatically under LwM2M server when opening a device;
+- Server settings load automatically under LwM2M server when opening the settings view;
   there is no separate Load/Reload server settings button. The backend discovers
   the configured server instance and each
   resource's actual Read/Write permissions through the backend. Absent or
@@ -117,7 +118,7 @@ Angular. The API-documentation link targets the default backend address.
   Results show their read-back value and observation time; a successful write
   does not guarantee that the value cannot change again later.
   Only one of these eight setting operations can be unresolved per device.
-  Opening or refreshing the device page recovers and reconciles a persisted
+  Opening or refreshing the settings view recovers and reconciles a persisted
   pending operation, returning a just-completed result and releasing its lock.
   The backend also reconciles an existing operation before rejecting a new
   submission as blocked. A completed write no longer stays pending until the user
@@ -174,9 +175,10 @@ Angular. The API-documentation link targets the default backend address.
   A new device without a metadata fetch has a null Coiote snapshot/timestamps.
 - Failed local inventory loads show an error rather than presenting old rows as
   successfully reloaded.
-- Device-page loading reads local administrative details and automatically
-  discovers server settings through the backend, without submitting device
-  commands. It does not discover provider resources for timezone controls.
+- Device-page loading reads local administrative details. Opening settings
+  discovers server settings through the backend without submitting device commands.
+  Switching views on the same device preserves drafts and pending result checks.
+  It does not discover provider resources for timezone controls.
   Lifetime requests are made only through the explicit lifetime actions.
   Bounded result polling starts only
   for a known pending server-setting operation; no automatic device-command

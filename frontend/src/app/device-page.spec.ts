@@ -121,7 +121,13 @@ describe('Device communication page', () => {
       imports: [DevicePage],
       providers: [
         provideRouter([]),
-        { provide: ActivatedRoute, useValue: { paramMap: params } },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            paramMap: params,
+            queryParamMap: new BehaviorSubject(convertToParamMap({ view: 'settings' })),
+          },
+        },
         { provide: DeviceApi, useValue: api },
       ],
     });
@@ -537,6 +543,7 @@ describe('Device communication page', () => {
     params.next(convertToParamMap({ endpoint: 'other' }));
     resolve({ settings: serverSettings, unresolved_operation: null });
     await loading;
+    await fixture.whenStable();
     expect(page.serverSettings()).toEqual([]);
     expect(page.serverOperation()).toBeNull();
     expect(api.serverSettings).toHaveBeenLastCalledWith('other');
