@@ -17,6 +17,7 @@ backend/                 FastAPI application, Coiote connector and SQLite models
   requirements.txt       Python dependencies
 frontend/                Angular application and its npm dependencies
 PROJECT_CONTEXT.md       Product decisions, implementation history and API research
+DEVICE_LIFETIME.md       Detailed registration-lifetime behavior and limitations
 .env                     Local Coiote configuration (not tracked)
 nexyn.db                 Local SQLite data (not tracked)
 ```
@@ -77,8 +78,8 @@ error. This development SSO configuration requires access to the existing server
 no local Keycloak server or client secret is needed.
 
 The development proxy forwards `/api/*` to `http://127.0.0.1:8000`, removing
-the `/api` prefix. Restart the backend after pulling changes so the approved
-timezone Write route and additive database migration are loaded. No CORS changes are required.
+the `/api` prefix. Restart the backend after updating so the current API routes
+and additive database migrations are loaded. No CORS changes are required.
 If your backend uses a different address, change `frontend/proxy.conf.json` and restart
 Angular. The API-documentation link targets the default backend address.
 
@@ -116,26 +117,26 @@ Angular. The API-documentation link targets the default backend address.
   timestamps and a filtered stored Coiote snapshot, not live resource values.
 - Read timezone explicitly, then use Check result to retrieve the operation outcome. Resource discovery
   checks Coiote's stored model capabilities; it is not itself a live Read.
-- Read the device timezone before editing it. Apply to device submits the
-  approved timezone-only Write followed by Read-back verification. The UI shows
+- Read the device timezone before editing it. Apply to device submits a
+  timezone Write followed by Read-back verification. The UI shows
   Applied and verified only after the backend confirms a matching returned value.
-- Lifetime (seconds) is an editable, page-local draft in Settings & configuration.
-  It appears above Timezone in a compact, width-limited layout without large
-  surrounding card borders.
-  Its Apply action is disabled; it is not read, persisted or sent to the device.
-  Discard clears it, as does opening another device. The info icon beside
-  Registration lifetime explains its purpose and links to AVSystem's
-  [Anjay Server Object documentation](https://docs.avsystem.com/hubfs/Anjay_Docs/BasicClient/BC-MandatoryObjects.html#server-object).
-  Lifetime controls registration validity, not sensor-reporting frequency or a
-  verified online status. The manufacturer/model/firmware Attributes section has
-  been removed from the UI; backend resource and Read APIs are unchanged.
+- Registration lifetime and eight allowlisted communication settings are under a
+  collapsible LwM2M server section; Timezone remains a separate setting. Lifetime
+  can be read and written, with fresh read-back verification for writes. Reads
+  reuse the latest stored confirmed observation when available, which may be
+  stale. See [DEVICE_LIFETIME.md](DEVICE_LIFETIME.md) for timeouts and safety.
+- The server section includes notification storing, binding, initial registration
+  delay, communication retry count/timer, sequence delay/retry count and Mute Send.
+  Settings are available according to discovered device capabilities; changes to
+  communication settings can interrupt connectivity. Successful writes require a
+  matching fresh read-back, not just task acceptance.
 - Rename the friendly name only.
 - Delete with an exact endpoint-name confirmation. This can delete the remote
   Coiote record too; it does not stop the running device client.
 - Reload list/details from the platform database through existing device GETs.
   These requests make no Coiote calls. No separate sync UI action.
-- No group operations, arbitrary writes/commands, logout control, CMP functionality,
-  automatic polling, or direct access to Coiote credentials.
+- No group operations in the frontend, arbitrary device writes, logout control,
+  CMP functionality, or direct access to Coiote credentials.
 
 | Frontend request                 | Existing backend route       |
 | -------------------------------- | ---------------------------- |
@@ -149,6 +150,12 @@ Angular. The API-documentation link targets the default backend address.
 | `POST /api/devices/{endpoint}/reads` | `POST /devices/{endpoint}/reads` |
 | `POST /api/devices/{endpoint}/writes` | `POST /devices/{endpoint}/writes` (approved addition) |
 | `GET /api/devices/{endpoint}/operations/{id}` | `GET /devices/{endpoint}/operations/{id}` |
+| `POST /api/devices/{endpoint}/lifetime/read` | `POST /devices/{endpoint}/lifetime/read` |
+| `PATCH /api/devices/{endpoint}/lifetime` | `PATCH /devices/{endpoint}/lifetime` |
+| `GET /api/devices/{endpoint}/server-settings` | `GET /devices/{endpoint}/server-settings` |
+| `POST /api/devices/{endpoint}/server-settings/{resourceId}/read` | `POST /devices/{endpoint}/server-settings/{resourceId}/read` |
+| `PATCH /api/devices/{endpoint}/server-settings/{resourceId}` | `PATCH /devices/{endpoint}/server-settings/{resourceId}` |
+| `GET /api/devices/{endpoint}/server-settings/operations/{id}` | `GET /devices/{endpoint}/server-settings/operations/{id}` |
 
 ## Important behavior
 
@@ -159,7 +166,7 @@ Angular. The API-documentation link targets the default backend address.
 - List/detail GETs read SQLite only; they do not rediscover devices, import
   provider-only records or fetch provider metadata. Creation already stores
   the returned Coiote ID, so a newly created device is immediately readable.
-  Existing local/imported records are retained. The UI does not poll.
+  Existing local/imported records are retained. Inventory is not polled.
 - The header no longer displays backend availability. Diagnostics remain beside
   Check connection in the connector view, labelled Platform API availability,
   not connector authentication or device reachability. Existing `/health` checks
@@ -179,15 +186,23 @@ Angular. The API-documentation link targets the default backend address.
   resource-discovery GETs independently. Discovery still contacts Coiote for
   safe model capabilities but cannot hold up administrative details.
   No live Read or Write is sent until the user requests it.
-- Pending or unconfirmed operations block another submission for that resource
-  in the current page. Check result is manual; no background polling or automatic
-  retries. Result-fetch failures retain the unresolved state. An uncertain
-  submission without an operation ID cannot be safely retried from that page.
-- Operations are persisted on the backend, but page operation state is not
-  restored after navigation/reload. The backend rejects a known unresolved
-  timezone Write with its operation ID, allowing manual checking. This guard
-  covers sequential requests, not atomic concurrent submission. Do not blindly
-  resubmit after an unknown outcome.
+- Timezone results are checked manually; unresolved or unconfirmed operations
+  block another submission on the current page. Its page state is not restored
+  after navigation, although backend operations are persisted. The backend blocks
+  known unresolved timezone Writes sequentially, not atomically under concurrency.
+- Server-setting operations are persisted and recovered on page load. Pending
+  results are checked automatically at two-second intervals, up to 30 checks,
+  with manual checks available afterward. Checks do not resubmit a command.
+  Only one of the eight server-setting operations may be unresolved per device.
+  A submission without a confirmed task ID remains blocked and requires
+  investigation; do not blindly retry after an unknown outcome.
+- The backend also has a `/devices/{endpoint}/time` API for timezone, UTC offset
+  and current time. Firmware upload and status endpoints exist but firmware
+  submissions are disabled unless `FOTA_ENABLED=true`; they have no frontend UI.
+  An enabled firmware upload requires a known stored connector domain; refresh
+  the device metadata if it is missing rather than assuming an account domain.
+  Firmware operations require separate review, device compatibility and safe
+  recovery planning. The current backend is not authorized for public exposure.
 - Timezone uses the IANA name in `Device.0.Timezone` (for example `Etc/UTC` or
   `Asia/Kolkata`), limited to 31 UTF-8 bytes for the Anjay demo. Both Read and Write
   capability must be exposed. Account permissions/model mapping still need

@@ -3,4 +3,5 @@ httpx==0.28.1
 pydantic==2.14.2
 python-dotenv==1.2.4
 sqlalchemy==2.1.6
+tzdata
 uvicorn==0.54.0

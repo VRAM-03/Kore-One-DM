@@ -5,6 +5,30 @@ AVSystem Coiote is the first device-management connector. Explain steps for a Py
 
 ## Current project structure and operation (November 17)
 
+- Merge of `origin/asunny-01` into `crud-sso`: retained the `backend/` package,
+  single root README and Keycloak setup while integrating the incoming lifetime,
+  LwM2M server-settings, device-time and feature-flagged firmware APIs and their
+  tests. Kept the prior Timezone controls alongside the incoming server settings.
+  The incoming LwM2M server-settings change had previously been reverted on
+  `main`; the user explicitly chose the coworker's branch including that change.
+- Device-page server-settings discovery runs when the page loads. The UI checks
+  pending server-setting results automatically every two seconds for at most 30
+  checks; it never resubmits operations, and manual checks remain available.
+  Lifetime Reads reuse the latest stored confirmed value if present; writes
+  execute a registration-update trigger and verify a fresh read-back. The
+  existing Timezone operation remains a manual-check flow. The `/time` API
+  supports timezone, UTC offset and current time separately.
+- Firmware submission is disabled by default unless `FOTA_ENABLED=true` and has
+  no UI. An enabled upload requires the device's stored connector domain; there
+  is no fallback to a specific account. Backend endpoints still lack token
+  validation/authorization, PSKs remain plaintext, and no live device operations
+  or SSO login were verified in this merge. Review and test with a safe device
+  before using any settings or firmware operation.
+- Merge validation: 110 backend tests and 46 frontend tests passed, and the
+  Angular production build passed. Pylance found no syntax errors in the new
+  backend modules. Added regression checks for retained timezone read/write
+  verification, lifetime mismatch reporting and missing firmware domain. Database
+  initialization is additive and may create the incoming task tables on startup.
 - `backend/` contains the FastAPI app, Coiote client, synchronization service,
   database configuration and models; `backend/tests/` contains backend tests.
   `frontend/` contains the Angular app. The single project README is `README.md`.
@@ -48,9 +72,12 @@ Design direction (confirmed November 10):
 - Keep NEXYN's public API independent of provider-specific details; translate through the Coiote connector. Local-only features must be explicitly identified and justified, not presented as synchronized Coiote features.
 - Existing groups are local-only and are not visible to Coiote. Before extending groups, investigate Coiote group capabilities and free-tier access, then agree on ownership, mapping, and synchronization behavior. Preserve existing local groups while that decision is pending.
 
-## Current UI/API decisions and implementation status (November 16)
+## Historical UI/API decisions and implementation status (November 16)
 
-The user requested explanations and discussion before implementation. Sync UI removal and the approved device communication/settings page are implemented; connectivity semantics still need evidence and agreement. Do not treat recommendations as approval to add/remove public endpoints.
+These notes describe the earlier baseline; the November 17 merge summary above
+supersedes older statements about Lifetime being a draft, Timezone being the only
+write, and the absence of automatic result checks. Connectivity semantics still
+need evidence and agreement.
 
 - **Connection status:** earlier user requested never connected/connected/disconnected, but current-online evidence is still unverified. The latest listing decision supersedes that presentation: Status shows stored Last seen only. Backend history states remain `never_connected`, `unknown`, `not_in_coiote` for details/dashboard; none establishes current reachability. A running simulator is not proof of communication. No documented, account-verified current-state API has yet been established; do not relabel unknown as online/offline.
 - A last-contact age threshold would be an explicitly estimated activity status, not verified connectivity; its interval and sleeping-device behavior require agreement. A successful live Read proves a response at completion time only. Pending/failed Reads do not automatically mean disconnected. Backend/provider outages must remain unable-to-verify, not falsely mark devices disconnected. Absence from Coiote remains an inventory condition rather than a connectivity verdict.
