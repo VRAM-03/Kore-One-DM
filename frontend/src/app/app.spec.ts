@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 import { Router, provideRouter } from '@angular/router';
 import { App } from './app';
-import { Device, DeviceApi, DeviceDetails } from './device-api';
+import { Device, DeviceApi, DeviceDetails, RegistrationLifetimeResult } from './device-api';
 import { DevicePage } from './device-page';
 
 const device: Device = {
@@ -33,6 +33,17 @@ describe('Device workspace', () => {
       delete: vi.fn().mockResolvedValue(undefined),
       resources: vi.fn().mockResolvedValue({ resources: [] }),
       serverSettings: vi.fn().mockResolvedValue({ settings: [], unresolved_operation: null }),
+      readLifetime: vi.fn().mockResolvedValue({
+        task_id: 'lifetime-1',
+        device_id: 'remote-1',
+        resource: 'LwM2M Server.0.Lifetime',
+        operation: 'read',
+        state: 'succeeded',
+        requested_lifetime: null,
+        lifetime: 3600,
+        matches_requested: null,
+        observed_at: '2026-11-16T00:00:00Z',
+      } satisfies RegistrationLifetimeResult),
     };
     TestBed.configureTestingModule({
       imports: [App],
@@ -410,6 +421,7 @@ describe('Device workspace', () => {
     expect(element.querySelector('#overview')).not.toBeNull();
     expect(element.querySelector('#settings')).toBeNull();
     expect(api.serverSettings).not.toHaveBeenCalled();
+    expect(api.readLifetime).not.toHaveBeenCalled();
     const settingsLink = element.querySelector<HTMLAnchorElement>(
       '.section-nav a[href$="?view=settings"]',
     )!;
@@ -420,8 +432,11 @@ describe('Device workspace', () => {
     expect(element.querySelector('#overview')).toBeNull();
     expect(element.querySelector('#settings #lwm2m-server-heading')).not.toBeNull();
     expect(api.serverSettings).toHaveBeenCalledExactlyOnceWith('lab-device');
+    expect(api.readLifetime).toHaveBeenCalledExactlyOnceWith('lab-device');
     expect(api.detail).toHaveBeenCalledTimes(1);
     expect(api.resources).not.toHaveBeenCalled();
+    element.querySelector<HTMLButtonElement>('[data-setting-row="1"] .setting-edit')!.click();
+    await fixture.whenStable();
     const lifetime = element.querySelector<HTMLInputElement>('#lifetime-seconds')!;
     lifetime.value = '120';
     lifetime.dispatchEvent(new Event('input', { bubbles: true }));
@@ -436,6 +451,7 @@ describe('Device workspace', () => {
     await fixture.whenStable();
     expect(element.querySelector<HTMLInputElement>('#lifetime-seconds')?.value).toBe('120');
     expect(api.serverSettings).toHaveBeenCalledTimes(1);
+    expect(api.readLifetime).toHaveBeenCalledTimes(2);
     app.navigate('devices');
     await fixture.whenStable();
     fixture.detectChanges();

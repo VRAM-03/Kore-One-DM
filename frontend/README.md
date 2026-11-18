@@ -71,11 +71,22 @@ Angular. The API-documentation link targets the default backend address.
   timestamps and a filtered stored Coiote snapshot, not live resource values.
 - The Timezone section is not shown in this frontend. Backend resource,
   timezone Read and timezone Write APIs are unchanged.
-- All nine editable Server-object resources are grouped under **LwM2M server**.
-  The arrow on the right collapses or expands the section without clearing drafts,
-  results, or pending checks. It starts expanded for each device.
-- Registration lifetime can be read with Show current lifetime and changed with
-  Apply to device. The display is the latest confirmed backend value and its
+- **LwM2M server** appears in the left Configurations table. The middle Settings
+  table lists all nine resources by name. Use the eye to view a setting's value,
+  timestamp and help in the right pane, or the pencil to open its editor.
+  Read-only resources show a lock instead of a pencil, with the tooltip
+  “This resource is read-only.”
+  Switching settings or collapsing the group preserves drafts and pending checks.
+- **Device** lists Manufacturer, Model Number, Serial Number, Firmware Version,
+  Available Power Sources (one row per reported instance), and Reboot.
+  The five readable resources show cached observations and can request a fresh
+  read. Reboot requires explicit confirmation, may interrupt communication, and
+  a successful task is not proof the device is back online. Factory Reset is
+  not exposed. Device reads and Reboot reuse the Server settings task lock and
+  result checks.
+- Registration lifetime loads automatically when opening or refreshing Settings
+  & configuration. Show current lifetime can refresh it on demand, and Apply to
+  device changes it. The display is the latest confirmed backend value and its
   observation time; the backend contacts the device only when it has no stored
   confirmed value. Writes are shown as applied only after the backend verifies
   the device read-back. If a write outcome is unknown, the UI blocks resubmission.
@@ -88,6 +99,8 @@ Angular. The API-documentation link targets the default backend address.
   Lifetime controls registration validity, not sensor-reporting frequency or a
   verified online status. The manufacturer/model/firmware Attributes section has
   been removed from the UI; backend resource and Read APIs are unchanged.
+- Each LwM2M server setting has a help button that explains what it controls,
+  what changing it affects, and where to find the protocol reference.
 - The same LwM2M server section includes the other eight editable fields from the
   supplied Server-object view: Notification storing (/6), Binding (/7), Initial
   registration delay timer (/14), Communication retry count (/17), Communication
@@ -149,6 +162,9 @@ Angular. The API-documentation link targets the default backend address.
 | `POST /api/devices/{endpoint}/server-settings/{resourceId}/read` | `POST /devices/{endpoint}/server-settings/{resourceId}/read` |
 | `PATCH /api/devices/{endpoint}/server-settings/{resourceId}` | `PATCH /devices/{endpoint}/server-settings/{resourceId}` |
 | `GET /api/devices/{endpoint}/server-settings/operations/{id}` | `GET /devices/{endpoint}/server-settings/operations/{id}` |
+| `GET /api/devices/{endpoint}/device-settings` | `GET /devices/{endpoint}/device-settings` |
+| `POST /api/devices/{endpoint}/device-settings/{resourceId}/read` | `POST /devices/{endpoint}/device-settings/{resourceId}/read` |
+| `POST /api/devices/{endpoint}/device-settings/reboot` | `POST /devices/{endpoint}/device-settings/reboot` (requires `{ "confirm": true }`) |
 
 ## Important behavior
 
@@ -176,10 +192,10 @@ Angular. The API-documentation link targets the default backend address.
 - Failed local inventory loads show an error rather than presenting old rows as
   successfully reloaded.
 - Device-page loading reads local administrative details. Opening settings
-  discovers server settings through the backend without submitting device commands.
+  discovers server settings and loads the latest confirmed lifetime.
   Switching views on the same device preserves drafts and pending result checks.
   It does not discover provider resources for timezone controls.
-  Lifetime requests are made only through the explicit lifetime actions.
+  Lifetime writes still require an explicit Apply to device action.
   Bounded result polling starts only
   for a known pending server-setting operation; no automatic device-command
   retries or continuous inventory/resource polling are performed by the frontend.

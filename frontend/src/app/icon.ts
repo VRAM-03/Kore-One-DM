@@ -17,6 +17,8 @@ export type IconName =
   | 'chevrons-right'
   | 'x'
   | 'pencil'
+  | 'eye'
+  | 'lock'
   | 'trash-2'
   | 'shield-check'
   | 'radio'

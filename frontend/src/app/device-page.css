@@ -58,11 +58,69 @@ h2 {
 .overview-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.settings-workspace,
+.configuration-panes {
+  display: grid;
+  align-items: start;
+  gap: 12px;
+}
+.settings-workspace {
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 4fr);
+}
+.configuration-panes {
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 1.4fr);
+}
+.configuration-panes[hidden] {
+  display: none;
+}
+.settings-workspace section,
 .settings-card {
-  border-bottom: 1px solid var(--line);
-  padding: 12px 0;
-  max-width: 760px;
   min-width: 0;
+}
+.settings-workspace h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.configuration-detail {
+  min-height: 120px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.configuration-table tbody th {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.configuration-table tr.selected {
+  background: var(--pale-blue);
+}
+.configuration-table:not(.settings-table) td {
+  padding: 0;
+}
+.settings-table :is(th, td):last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+.setting-row-actions {
+  display: flex;
+  gap: 4px;
+}
+.setting-read-only {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
+}
+.setting-row-actions [aria-pressed='true'] {
+  background: var(--pale-blue);
+  color: var(--blue);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.settings-workspace button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
 }
 .reading-time,
 .operation-state {
@@ -95,32 +153,29 @@ h2 {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.settings-card + .settings-card {
-  margin-top: 8px;
-}
-.server-group-heading {
+.server-group-toggle {
+  width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  max-width: 760px;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 12px;
-}
-.server-group-heading h3 {
-  margin: 0;
-  font-size: 15px;
+  gap: 8px;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
 }
-.server-group-toggle.expanded app-icon {
+.server-group-toggle app-icon:last-child {
+  margin-left: auto;
+}
+.server-group-toggle[aria-expanded='true'] app-icon:last-child {
   transform: rotate(90deg);
 }
-.server-group-toggle:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-.server-setting-card .configuration-editor {
+.configuration-editor {
   margin-top: 12px;
+  flex-wrap: wrap;
 }
 .server-operation {
   display: flex;
@@ -142,7 +197,7 @@ h2 {
   gap: 12px;
 }
 .settings-card .field {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
 }
 .settings-card form .button {
@@ -167,14 +222,14 @@ h2 {
 .configuration-heading .configuration-title {
   margin: 0;
 }
-.lifetime-info-toggle {
+.setting-info-toggle {
   color: var(--blue);
 }
-.lifetime-info-toggle:focus-visible {
+.setting-info-toggle:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
-.lifetime-info-panel {
+.setting-info-panel {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
@@ -188,11 +243,11 @@ h2 {
   font-size: 12px;
   color: var(--muted);
 }
-.lifetime-info-panel p {
+.setting-info-panel p {
   margin: 12px 0;
   line-height: 1.6;
 }
-.lifetime-info-panel a {
+.setting-info-panel a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -211,7 +266,15 @@ h2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+@media (max-width: 850px) {
+  .settings-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 @media (max-width: 650px) {
+  .configuration-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .device-page-heading,
   .settings-card form,
   .configuration-editor {

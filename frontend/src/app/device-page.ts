@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, DestroyRef, effect, inject, signal, untracked } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -8,6 +8,7 @@ import { map } from 'rxjs';
 import {
   DeviceApi,
   DeviceDetails,
+  DeviceSetting,
   RegistrationLifetimeResult,
   ServerSetting,
   ServerSettingOperation,
@@ -17,6 +18,46 @@ import {
   submissionOperationId,
 } from './device-api';
 import { Icon } from './icon';
+
+const SETTING_HELP: Partial<Record<number, readonly string[]>> = {
+  1: [
+    'Lifetime is the registration validity period, in seconds, for a LwM2M server. The client renews its registration with an Update before it expires.',
+    'Shorter lifetimes generally mean more registration traffic and power use. Longer lifetimes allow a longer gap before registration expires. Lifetime is not a sensor-reporting interval or proof that the device is currently online.',
+    "AVSystem's Anjay example uses a 60-second lifetime and shows Updates about every 30 seconds. The exact Update schedule depends on the client and transport settings.",
+  ],
+  6: [
+    'Controls what happens to LwM2M Observe notifications while the client is offline or this server account is disabled.',
+    'True queues notifications to report when communication resumes. False lets the client discard them or temporarily suspend observations. Queue capacity depends on the device, so enabling storage does not guarantee a complete history.',
+  ],
+  7: [
+    'Selects the transport binding the LwM2M client uses to communicate with this server. For example, U denotes UDP.',
+    'Both the device and server must support the selected transport. Supported codes and queue-mode behavior depend on the client and LwM2M version. Changing the binding can interrupt communication, so verify support before applying it.',
+  ],
+  14: [
+    'Sets the wait, in seconds, before the client tries to register with this server after registration to the preceding server in the configured registration order completes.',
+    'This applies until the first successful registration after bootstrapping. It does not delay routine registration updates or change how often the device sends telemetry.',
+  ],
+  17: [
+    'Sets how many consecutive communication attempts can fail before the client considers one communication sequence failed.',
+    'A higher count gives the device more chances to recover within the same sequence, but can use more power and delay declaring failure. The Communication retry timer controls the wait between attempts.',
+  ],
+  18: [
+    'Sets the base wait in seconds between attempts within a communication sequence. The retry delay doubles each time: a 10-second base gives waits of 10, 20, and 40 seconds.',
+    'Longer waits reduce retry traffic during an outage but slow recovery when the server becomes reachable again. The sequence delay timer controls the separate wait between groups of attempts.',
+  ],
+  19: [
+    'Sets how long, in seconds, the device waits before starting a new communication sequence after the previous group of attempts fails. It can apply to registration or bootstrapping sequences.',
+    'This is not the wait between individual attempts. The LwM2M definition uses the maximum value to mean that no new sequence should start.',
+  ],
+  20: [
+    'Sets how many consecutive communication sequences can fail before the client considers the registration attempt failed.',
+    'A sequence is a group of attempts governed by the Communication retry count and timer. Increasing this limit gives the device more chances to register across separate sequences, but delays the final failure decision.',
+  ],
+  23: [
+    'Controls whether the device can send data to this server using the client-initiated LwM2M Send operation.',
+    'True disables Send; false enables it on devices that implement it. It does not disable Observe notifications, server-initiated reads, or registration updates.',
+  ],
+};
 
 @Component({
   selector: 'app-device-page',
@@ -53,10 +94,38 @@ export class DevicePage {
   readonly lifetimeError = signal('');
   readonly lifetimeStatus = signal('');
   readonly lifetimeWriteUnconfirmed = signal(false);
-  readonly lifetimeInfoOpen = signal(false);
+  readonly settingHelp = SETTING_HELP;
+  readonly openSettingInfo = signal<number | null>(null);
   readonly serverSectionOpen = signal(true);
+  readonly configurationGroup = signal<'server' | 'device'>('server');
+  readonly deviceSettings = signal<DeviceSetting[]>([]);
+  readonly deviceSettingsLoading = signal(false);
+  readonly deviceSettingsError = signal('');
+  readonly rebootConfirmation = signal(false);
   readonly serverAutoChecking = signal(false);
   readonly serverSettings = signal<ServerSetting[]>([]);
+  readonly settingSelection = signal<{ resourceId: number; mode: 'details' | 'edit' }>({
+    resourceId: 1,
+    mode: 'details',
+  });
+  readonly settingRows = computed(() =>
+    this.configurationGroup() === 'device'
+      ? this.deviceSettings().map((setting) => ({ ...setting, writable: false }))
+      : [
+          { resource_id: 1, label: 'Registration lifetime', readable: true, writable: true },
+          ...this.serverSettings(),
+        ],
+  );
+  readonly selectedDeviceSetting = computed(() =>
+    this.deviceSettings().find(
+      (setting) => setting.resource_id === this.settingSelection().resourceId,
+    ),
+  );
+  readonly selectedServerSettings = computed(() =>
+    this.serverSettings().filter(
+      (setting) => setting.resource_id === this.settingSelection().resourceId,
+    ),
+  );
   readonly serverSettingsProcessing = signal(false);
   readonly serverSettingsError = signal('');
   readonly serverOperation = signal<ServerSettingOperation | null>(null);
@@ -80,8 +149,13 @@ export class DevicePage {
       this.lifetimeError.set('');
       this.lifetimeStatus.set('');
       this.lifetimeWriteUnconfirmed.set(false);
-      this.lifetimeInfoOpen.set(false);
+      this.openSettingInfo.set(null);
       this.serverSectionOpen.set(true);
+      this.configurationGroup.set('server');
+      this.deviceSettings.set([]);
+      this.deviceSettingsLoading.set(false);
+      this.deviceSettingsError.set('');
+      this.selectSetting(1, 'details');
       this.serverSettingsLoaded = false;
       this.serverSettings.set([]);
       this.serverSettingsProcessing.set(false);
@@ -97,10 +171,55 @@ export class DevicePage {
     });
     effect(() => {
       const endpoint = this.endpoint();
-      if (this.showingSettings() && endpoint && !this.serverSettingsLoaded) {
-        untracked(() => void this.loadServerSettings());
+      if (this.showingSettings() && endpoint) {
+        untracked(() => {
+          if (!this.serverSettingsLoaded) void this.loadServerSettings();
+          void this.readLifetime();
+        });
+      } else {
+        this.rebootConfirmation.set(false);
       }
     });
+  }
+
+  selectSetting(resourceId: number, mode: 'details' | 'edit'): void {
+    this.openSettingInfo.set(null);
+    this.rebootConfirmation.set(false);
+    this.settingSelection.set({ resourceId, mode });
+  }
+
+  selectConfigurationGroup(group: 'server' | 'device'): void {
+    if (this.configurationGroup() === group) {
+      this.serverSectionOpen.update((open) => !open);
+      this.rebootConfirmation.set(false);
+    } else {
+      this.configurationGroup.set(group);
+      this.serverSectionOpen.set(true);
+      this.selectSetting(group === 'server' ? 1 : 0, 'details');
+    }
+    if (group === 'device' && this.serverSectionOpen() && !this.deviceSettings().length) {
+      void this.loadDeviceSettings();
+    }
+  }
+
+  async loadDeviceSettings(): Promise<void> {
+    if (this.deviceSettingsLoading()) return;
+    const generation = this.generation;
+    this.deviceSettingsLoading.set(true);
+    this.deviceSettingsError.set('');
+    try {
+      const settings = await this.api.deviceSettings(this.endpoint());
+      if (generation === this.generation) this.deviceSettings.set(settings);
+    } catch (error) {
+      if (generation === this.generation) this.deviceSettingsError.set(errorMessage(error));
+    } finally {
+      if (generation === this.generation) this.deviceSettingsLoading.set(false);
+    }
+  }
+
+  reloadDevicePage(): void {
+    void this.loadDetails();
+    if (this.showingSettings()) void this.readLifetime();
   }
 
   async loadDetails(): Promise<void> {
@@ -193,23 +312,51 @@ export class DevicePage {
       );
       return;
     }
+    if (kind === 'read') {
+      await this.submitConfigurationOperation(setting.resource_id, kind, null, false, () =>
+        this.api.readServerSetting(this.endpoint(), setting.resource_id),
+      );
+    } else if (value !== null) {
+      await this.submitConfigurationOperation(setting.resource_id, kind, value, false, () =>
+        this.api.writeServerSetting(this.endpoint(), setting.resource_id, value),
+      );
+    }
+  }
+
+  async submitDeviceSetting(setting: DeviceSetting): Promise<void> {
+    if (this.serverSettingsBusy() || this.deviceSettingsLoading() || this.lifetimeProcessing())
+      return;
+    if (setting.resource_id === 4) {
+      if (!setting.executable || !this.rebootConfirmation()) return;
+      this.rebootConfirmation.set(false);
+      await this.submitConfigurationOperation(4, 'reboot', null, true, () =>
+        this.api.rebootDevice(this.endpoint()),
+      );
+    } else if (setting.readable) {
+      await this.submitConfigurationOperation(setting.resource_id, 'read', null, true, () =>
+        this.api.readDeviceSetting(this.endpoint(), setting.resource_id),
+      );
+    }
+  }
+
+  private async submitConfigurationOperation(
+    resourceId: number,
+    kind: ServerSettingOperation['kind'],
+    value: ServerSettingValue | null,
+    deviceResource: boolean,
+    submit: () => Promise<ServerSettingOperation>,
+  ): Promise<void> {
     const generation = this.generation;
     this.serverSettingsProcessing.set(true);
     this.serverSettingsError.set('');
     this.serverOperation.set(null);
     try {
-      let operation: ServerSettingOperation;
-      if (kind === 'read') {
-        operation = await this.api.readServerSetting(this.endpoint(), setting.resource_id);
-      } else if (value !== null) {
-        operation = await this.api.writeServerSetting(this.endpoint(), setting.resource_id, value);
-      } else {
-        throw new Error('A server setting value is required.');
-      }
+      const operation = await submit();
       if (generation === this.generation) {
         if (
-          operation.resource_id !== setting.resource_id ||
+          operation.resource_id !== resourceId ||
           operation.kind !== kind ||
+          operation.resource.startsWith('Device.0.') !== deviceResource ||
           (kind === 'write' && operation.requested_value !== value)
         ) {
           this.serverSubmissionUnknown.set(true);
@@ -248,7 +395,12 @@ export class DevicePage {
     try {
       const result = await this.api.serverSettingOperation(this.endpoint(), operation.id);
       if (generation === this.generation) {
-        if (result.id !== operation.id || result.resource_id !== operation.resource_id) {
+        if (
+          result.id !== operation.id ||
+          result.resource_id !== operation.resource_id ||
+          result.resource !== operation.resource ||
+          result.kind !== operation.kind
+        ) {
           this.serverSettingsError.set(
             'The returned operation does not match the requested setting.',
           );
@@ -301,7 +453,22 @@ export class DevicePage {
     if (operation.state !== 'pending') this.stopServerChecks();
     this.serverOperation.set(operation);
     this.serverSubmissionUnknown.set(false);
-    if (operation.state === 'succeeded' || operation.state === 'verification_failed') {
+    if (operation.resource.startsWith('Device.0.')) {
+      if (operation.state === 'succeeded' && operation.kind === 'read') {
+        const observations = operation.observations;
+        if (observations?.length) {
+          this.deviceSettings.update((settings) =>
+            settings.map((setting) =>
+              setting.resource_id === operation.resource_id
+                ? { ...setting, observations }
+                : setting,
+            ),
+          );
+        } else {
+          this.serverSettingsError.set('The Device read completed without any observations.');
+        }
+      }
+    } else if (operation.state === 'succeeded' || operation.state === 'verification_failed') {
       if (
         operation.value === null ||
         !operation.observed_at ||
@@ -337,9 +504,7 @@ export class DevicePage {
       if (generation !== this.generation) return;
       if (!this.setLifetimeResult(result)) {
         this.lifetimeError.set('The backend did not return a confirmed registration lifetime.');
-        return;
       }
-      this.lifetimeStatus.set('Latest confirmed lifetime loaded.');
     } catch (error) {
       if (generation === this.generation) this.lifetimeError.set(errorMessage(error));
     } finally {
