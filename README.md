@@ -121,9 +121,10 @@ Angular. The API-documentation link targets the default backend address.
   resources.
 - Registration lifetime and eight allowlisted communication settings are under a
   collapsible LwM2M server section. Lifetime can be read and written, with fresh
-  read-back verification for writes. Reads reuse the latest stored confirmed
-  observation when available, which may be stale. See [DEVICE_LIFETIME.md](DEVICE_LIFETIME.md)
-  for timeouts and safety.
+  read-back verification for writes. Every lifetime read fetches a fresh value
+  from the device through Coiote, including the **Sync Current Lifetime** button,
+  opening Settings and reloading details in that view.
+  See [DEVICE_LIFETIME.md](DEVICE_LIFETIME.md) for timeouts and safety.
 - The server section includes notification storing, binding, initial registration
   delay, communication retry count/timer, sequence delay/retry count and Mute Send.
   Settings are available according to discovered device capabilities; changes to

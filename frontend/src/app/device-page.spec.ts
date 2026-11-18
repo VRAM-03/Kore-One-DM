@@ -350,6 +350,7 @@ describe('Device communication page', () => {
     fixture.detectChanges();
     api.readLifetime.mockResolvedValueOnce({ ...lifetimeRead, lifetime: 1800 });
     const read = element.querySelector<HTMLButtonElement>('.lifetime-current button')!;
+    expect(read.textContent?.trim()).toBe('Sync Current Lifetime');
     expect(read.disabled).toBe(false);
     read.click();
     await fixture.whenStable();

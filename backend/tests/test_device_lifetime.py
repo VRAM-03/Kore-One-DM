@@ -222,7 +222,7 @@ class DeviceLifetimeTests(unittest.TestCase):
         self.assertEqual(response.json()["lifetime"], 100)
         self.assertFalse(response.json()["matches_requested"])
 
-    def test_repeated_read_uses_stored_value_without_any_coiote_requests(self):
+    def test_repeated_read_fetches_device_value_and_persists_a_new_task(self):
         first = self.read().json()
         with self.sessions() as db:
             self.assertEqual(db.get(LifetimeTask, "task-1").confirmed_lifetime, 3600)
@@ -230,13 +230,19 @@ class DeviceLifetimeTests(unittest.TestCase):
         self.lifetime = "8000"
         response = self.read()
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), first)
+        self.assertEqual(response.json()["lifetime"], 8000)
+        self.assertNotEqual(response.json()["task_id"], first["task_id"])
         self.assertEqual(response.headers["cache-control"], "no-store")
-        self.assertEqual(self.requests, [])
+        self.assertEqual(self.task_number, 2)
+        request = next(request for request in self.requests if request.method == "POST")
+        self.assertEqual(json.loads(request.content)["taskDefinition"]["operations"], [
+            {"read": {"key": "LwM2M Server.3.Lifetime"}}
+        ])
         with self.sessions() as db:
-            self.assertEqual(db.query(LifetimeTask).count(), 1)
+            self.assertEqual(db.query(LifetimeTask).count(), 2)
+            self.assertEqual(db.get(LifetimeTask, "task-2").confirmed_lifetime, 8000)
 
-    def test_read_uses_latest_write_readback_as_a_read_result(self):
+    def test_read_after_write_fetches_device_instead_of_reusing_write_readback(self):
         self.read()
         self.lifetime = "8000"
         self.updated = "2026-11-16T08:00:02Z"
@@ -244,15 +250,17 @@ class DeviceLifetimeTests(unittest.TestCase):
         self.assertEqual(written.status_code, 200)
         self.assertEqual(self.task_number, 2)
         self.requests.clear()
+        self.lifetime = "9000"
         response = self.read()
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {
-            **written.json(), "operation": "read",
-            "requested_lifetime": None, "matches_requested": None,
-        })
-        self.assertEqual(self.requests, [])
+        self.assertEqual(response.json()["lifetime"], 9000)
+        self.assertEqual(response.json()["operation"], "read")
+        self.assertIsNone(response.json()["requested_lifetime"])
+        self.assertIsNone(response.json()["matches_requested"])
+        self.assertNotEqual(response.json()["task_id"], written.json()["task_id"])
+        self.assertEqual(self.task_number, 3)
 
-    def test_null_stored_lifetime_falls_back_to_device_and_persists_result(self):
+    def test_read_ignores_unconfirmed_tasks_and_persists_result(self):
         with self.sessions() as db:
             device = db.query(Device).filter_by(endpoint_name="sensor").one()
             db.add(LifetimeTask(
@@ -265,9 +273,19 @@ class DeviceLifetimeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["lifetime"], 3600)
         self.assertEqual(self.task_number, 1)
-        self.requests.clear()
-        self.assertEqual(self.read().json(), response.json())
-        self.assertEqual(self.requests, [])
+        with self.sessions() as db:
+            self.assertIsNone(db.get(LifetimeTask, "unconfirmed").confirmed_lifetime)
+            self.assertEqual(db.get(LifetimeTask, "task-1").confirmed_lifetime, 3600)
+
+    def test_read_times_out_instead_of_returning_a_stored_confirmed_value(self):
+        self.assertEqual(self.read().status_code, 200)
+        self.error = 4041
+        with patch("backend.device_lifetime.LIFETIME_TIMEOUT_SECONDS", 0.03):
+            response = self.read()
+        self.assertEqual(response.status_code, 504)
+        self.assertNotIn("lifetime", response.json())
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(self.task_number, 2)
 
     def test_stored_lifetime_is_scoped_to_local_and_remote_device_ids(self):
         for local_endpoint, remote_id in (

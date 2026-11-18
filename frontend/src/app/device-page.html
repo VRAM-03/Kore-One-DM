@@ -11,7 +11,7 @@
       [disabled]="loading()"
       [title]="
         showingSettings()
-          ? 'Reload stored details and the latest confirmed lifetime'
+          ? 'Reload stored details and sync the current lifetime from the device'
           : 'Reload stored details; does not refresh Coiote'
       "
     >
@@ -355,7 +355,7 @@
                         (click)="readLifetime()"
                         [disabled]="lifetimeProcessing()"
                       >
-                        <app-icon name="refresh-cw" /> Show current lifetime
+                        <app-icon name="refresh-cw" /> Sync Current Lifetime
                       </button>
                     </div>
                   </div>
