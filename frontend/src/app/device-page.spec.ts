@@ -105,6 +105,13 @@ describe('Device communication page', () => {
           executable: false,
           observations: [],
         },
+        ...['Model Number', 'Serial Number', 'Firmware Version'].map((label, index) => ({
+          resource_id: index + 1,
+          label,
+          readable: true,
+          executable: false,
+          observations: [],
+        })),
         { resource_id: 4, label: 'Reboot', readable: false, executable: true, observations: [] },
         {
           resource_id: 6,
@@ -216,7 +223,7 @@ describe('Device communication page', () => {
       /3\s*5/,
     );
     expect(element.querySelector('.settings-table .setting-edit')).toBeNull();
-    expect(element.querySelectorAll('.settings-table .setting-read-only')).toHaveLength(2);
+    expect(element.querySelectorAll('.settings-table .setting-read-only')).toHaveLength(5);
     expect(element.querySelector('[data-setting-row="4"] .setting-read-only')).toBeNull();
     expect(api.readDeviceSetting).not.toHaveBeenCalled();
     chooseSetting(element, 4, 'view');
@@ -245,6 +252,39 @@ describe('Device communication page', () => {
     expect(api.rebootDevice).toHaveBeenCalledExactlyOnceWith('lab');
     expect(page.serverOperation()?.state).toBe('succeeded');
     expect(detailPane.textContent).toContain('does not confirm the device is back online');
+  });
+
+  it('shows a short description and matching help for each Device resource', async () => {
+    const { fixture, api, element } = setup();
+    await fixture.whenStable();
+    element.querySelector<HTMLElement>('#device-settings-heading')!.click();
+    await fixture.whenStable();
+
+    for (const [id, label, summary, detail] of [
+      [0, 'Manufacturer', 'manufacturer reported', 'who made the device'],
+      [1, 'Model Number', 'model number reported', 'checking compatibility'],
+      [2, 'Serial Number', 'serial number reported', 'distinguish individual units'],
+      [3, 'Firmware Version', 'firmware version reported', 'After an update'],
+      [4, 'Reboot', 'may briefly interrupt communication', 'requires confirmation'],
+      [6, 'Available Power Sources', 'power sources the device reports', 'battery charge level'],
+    ] as const) {
+      chooseSetting(element, id, 'view');
+      await fixture.whenStable();
+      const card = element.querySelector('#configuration-detail .settings-card')!;
+      expect(card.querySelector('.metadata-note')?.textContent).toContain(summary);
+      const toggle = card.querySelector<HTMLButtonElement>('.setting-info-toggle')!;
+      expect(toggle.getAttribute('aria-label')).toBe(`About ${label}`);
+      const panel = card.querySelector<HTMLElement>(`#${toggle.getAttribute('aria-controls')}`)!;
+      expect(panel.hidden).toBe(true);
+      toggle.click();
+      await fixture.whenStable();
+      expect(panel.hidden).toBe(false);
+      expect(panel.textContent).toContain(detail);
+      expect(panel.querySelector('a')?.getAttribute('href')).toContain('/3.xml');
+    }
+
+    expect(api.readDeviceSetting).not.toHaveBeenCalled();
+    expect(api.rebootDevice).not.toHaveBeenCalled();
   });
 
   it('omits Attributes and shows registration-lifetime guidance and controls', async () => {

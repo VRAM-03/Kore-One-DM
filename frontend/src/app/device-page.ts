@@ -59,6 +59,40 @@ const SETTING_HELP: Partial<Record<number, readonly string[]>> = {
   ],
 };
 
+const DEVICE_SETTING_HELP: Partial<Record<number, { summary: string; details: string }>> = {
+  0: {
+    summary: 'Identifies the manufacturer reported by the device.',
+    details:
+      'Use it to identify who made the device. It is not the editable name shown in the device inventory.',
+  },
+  1: {
+    summary: 'Shows the model number reported by the device.',
+    details:
+      'Use it to identify the product model when checking compatibility or looking up support documentation.',
+  },
+  2: {
+    summary: 'Shows the serial number reported by the device.',
+    details:
+      'Use it to distinguish individual units of the same model. It is separate from the endpoint name used for registration.',
+  },
+  3: {
+    summary: 'Shows the firmware version reported by the device.',
+    details:
+      'Use it to check which firmware the device reports running. After an update, read the resource again to refresh the recorded version.',
+  },
+  4: {
+    summary:
+      'Restarts the device without erasing its configuration and may briefly interrupt communication.',
+    details:
+      'Reboot requires confirmation. Acknowledgement of the command does not mean the device is back online.',
+  },
+  6: {
+    summary: 'Lists the power sources the device reports as available.',
+    details:
+      'Each instance identifies a source type, such as a battery or an external supply. This resource does not show the battery charge level or which source is currently supplying power.',
+  },
+};
+
 @Component({
   selector: 'app-device-page',
   imports: [CommonModule, ReactiveFormsModule, RouterLink, Icon],
@@ -95,6 +129,7 @@ export class DevicePage {
   readonly lifetimeStatus = signal('');
   readonly lifetimeWriteUnconfirmed = signal(false);
   readonly settingHelp = SETTING_HELP;
+  readonly deviceSettingHelp = DEVICE_SETTING_HELP;
   readonly openSettingInfo = signal<number | null>(null);
   readonly serverSectionOpen = signal(true);
   readonly configurationGroup = signal<'server' | 'device'>('server');

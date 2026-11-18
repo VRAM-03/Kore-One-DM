@@ -71,17 +71,18 @@ Angular. The API-documentation link targets the default backend address.
   timestamps and a filtered stored Coiote snapshot, not live resource values.
 - The Timezone section is not shown in this frontend. Backend resource,
   timezone Read and timezone Write APIs are unchanged.
-- **LwM2M server** appears in the left Configurations table. The middle Settings
-  table lists all nine resources by name. Use the eye to view a setting's value,
-  timestamp and help in the right pane, or the pencil to open its editor.
+- **LwM2M server** appears in the left **Object** table. The middle **Resource**
+  table lists all nine resources by name. Use the eye to view a resource's value,
+  timestamp and help in the **Details** pane, or the pencil to open its editor.
   Read-only resources show a lock instead of a pencil, with the tooltip
   “This resource is read-only.”
   Switching settings or collapsing the group preserves drafts and pending checks.
 - **Device** lists Manufacturer, Model Number, Serial Number, Firmware Version,
   Available Power Sources (one row per reported instance), and Reboot.
   The five readable resources show cached observations and can request a fresh
-  read. Reboot requires explicit confirmation, may interrupt communication, and
-  a successful task is not proof the device is back online. Factory Reset is
+  read. Each Device setting shows a short description and a help icon with more
+  detail, matching LwM2M server settings. Reboot requires explicit confirmation,
+  may interrupt communication, and a successful task is not proof the device is back online. Factory Reset is
   not exposed. Device reads and Reboot reuse the Server settings task lock and
   result checks.
 - Registration lifetime loads automatically when opening or refreshing Settings
