@@ -16,6 +16,7 @@ from uuid import uuid4
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .coiote_configuration import router as coiote_configuration_router
 from .database import engine, Base, get_db, initialize_database
 from .device_lifetime import router as lifetime_router
 from .device_server_settings import router as server_settings_router
@@ -43,6 +44,7 @@ from .fota_client import (
 initialize_database(engine)
 
 app = FastAPI()
+app.include_router(coiote_configuration_router)
 app.include_router(lifetime_router)
 app.include_router(server_settings_router)
 app.include_router(time_router)

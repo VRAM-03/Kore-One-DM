@@ -105,16 +105,31 @@ export interface ServerSetting {
   observed_at: string | null;
 }
 
+export interface DeviceObservation {
+  name: string;
+  value: string;
+  updateTime: string;
+}
+
+export interface DeviceSetting {
+  resource_id: number;
+  label: string;
+  readable: boolean;
+  executable: boolean;
+  observations: DeviceObservation[];
+}
+
 export interface ServerSettingOperation {
   id: string;
   resource_id: number;
   resource: string;
-  kind: 'read' | 'write';
+  kind: 'read' | 'write' | 'reboot';
   state: 'pending' | 'submission_unknown' | 'succeeded' | 'failed' | 'verification_failed';
   requested_value: ServerSettingValue | null;
   value: ServerSettingValue | null;
   observed_at: string | null;
   error: string | null;
+  observations?: DeviceObservation[];
 }
 
 export interface ServerSettingsResponse {
@@ -201,6 +216,29 @@ export class DeviceApi {
     );
   }
 
+  deviceSettings(endpoint: string): Promise<DeviceSetting[]> {
+    return firstValueFrom(
+      this.http.get<DeviceSetting[]>(`${this.deviceUrl(endpoint)}/device-settings`),
+    );
+  }
+
+  readDeviceSetting(endpoint: string, id: number): Promise<ServerSettingOperation> {
+    return firstValueFrom(
+      this.http.post<ServerSettingOperation>(
+        `${this.deviceUrl(endpoint)}/device-settings/${id}/read`,
+        null,
+      ),
+    );
+  }
+
+  rebootDevice(endpoint: string): Promise<ServerSettingOperation> {
+    return firstValueFrom(
+      this.http.post<ServerSettingOperation>(`${this.deviceUrl(endpoint)}/device-settings/reboot`, {
+        confirm: true,
+      }),
+    );
+  }
+
   readServerSetting(endpoint: string, resourceId: number): Promise<ServerSettingOperation> {
     return firstValueFrom(
       this.http.post<ServerSettingOperation>(
@@ -236,6 +274,14 @@ export class DeviceApi {
       this.http.get<DeviceOperation>(
         `${this.deviceUrl(endpoint)}/operations/${encodeURIComponent(id)}`,
       ),
+    );
+  }
+
+  saveCoioteConfiguration(username: string, password: string): Promise<void> {
+    return firstValueFrom(
+      this.http
+        .put<void>(`${this.base}/connectors/coiote/configuration`, { username, password })
+        .pipe(timeout(15000)),
     );
   }
 

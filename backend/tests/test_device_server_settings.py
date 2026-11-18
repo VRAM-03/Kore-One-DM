@@ -70,6 +70,8 @@ class ServerSettingsTests(unittest.TestCase):
         self.addCleanup(env_patch.stop)
         os.environ.pop("COIOTE_SHORT_SERVER_ID", None)
         self.url = "/devices/sensor/server-settings"
+        self.device_url = "/devices/sensor/device-settings"
+        self.reboot_allowed = True
 
     def key(self, resource_id):
         return f"LwM2M Server.3.{self.names[resource_id]}"
@@ -81,8 +83,10 @@ class ServerSettingsTests(unittest.TestCase):
         self.requests.append(request)
         if request.method == "POST":
             definition = json.loads(request.content)["taskDefinition"]
-            resource = definition["operations"][-1]["read"]["key"]
-            self.active_resource = next(i for i in self.names if self.key(i) == resource)
+            operation = definition["operations"][-1]
+            resource = next(iter(operation.values()))["key"]
+            if resource.startswith("LwM2M Server."):
+                self.active_resource = next(i for i in self.names if self.key(i) == resource)
             if self.submit_error:
                 raise httpx.ReadTimeout("Lost submission response", request=request)
             return httpx.Response(201, json="provider-task")
@@ -92,6 +96,17 @@ class ServerSettingsTests(unittest.TestCase):
                 "startTime": "2026-11-17T09:00:00Z",
             })
         if "/instantiatedResources/" in request.url.path:
+            if request.url.params["parameters"] == "Device":
+                return httpx.Response(200, json=[
+                    {"path": f"Device.0.{name}", "resourceId": i,
+                     "type": "None" if i in (4, 5) else "Integer" if i == 6 else "String",
+                     "operations": ["Execute"] if i == 5 or (i == 4 and self.reboot_allowed)
+                     else [] if i == 4 else ["Read"]}
+                    for i, name in enumerate([
+                        "Manufacturer", "Model Number", "Serial Number", "Firmware Version",
+                        "Reboot", "Factory Reset", "Available Power Sources",
+                    ])
+                ])
             return httpx.Response(200, json=[
                 {
                     "path": self.key(i), "resourceId": i,
@@ -101,6 +116,14 @@ class ServerSettingsTests(unittest.TestCase):
                 for i in self.names if i not in self.absent
             ])
         resource = request.url.params["parameters"]
+        if resource.startswith("Device.0."):
+            return httpx.Response(200, json=[
+                self.parameter(name, value) for name, value in {
+                    "Device.0.Manufacturer": "Mock manufacturer",
+                    "Device.0.Available Power Sources.0": "1",
+                    "Device.0.Available Power Sources.3": "5",
+                }.items() if name.startswith(resource)
+            ])
         if resource == "LwM2M Server.":
             return httpx.Response(200, json=[
                 self.parameter("LwM2M Server.3.Short Server ID", "1"),
@@ -115,6 +138,50 @@ class ServerSettingsTests(unittest.TestCase):
 
     def check(self, operation):
         return self.client.get(f"{self.url}/operations/{operation['id']}")
+
+    def test_device_discovery_and_fresh_multi_instance_read(self):
+        response = self.client.get(self.device_url)
+        self.assertEqual(response.status_code, 200)
+        rows = {row["resource_id"]: row for row in response.json()}
+        self.assertEqual(set(rows), {0, 1, 2, 3, 4, 6})
+        self.assertTrue(rows[4]["executable"])
+        self.assertEqual(rows[0]["observations"][0]["value"], "Mock manufacturer")
+        self.assertFalse(any(request.method == "POST" for request in self.requests))
+        submission = self.client.post(f"{self.device_url}/6/read")
+        self.assertEqual(submission.status_code, 202)
+        definition = json.loads(next(r.content for r in self.requests if r.method == "POST"))["taskDefinition"]
+        self.assertEqual(definition["operations"], [{"read": {"key": "Device.0.Available Power Sources"}}])
+        self.observed_at = "2026-11-17T08:59:59Z"
+        self.assertEqual(self.check(submission.json()).json()["state"], "pending")
+        self.observed_at = "2026-11-17T09:00:02Z"
+        result = self.check(submission.json()).json()
+        self.assertEqual(result["state"], "succeeded")
+        self.assertEqual(result["resource"], "Device.0.Available Power Sources")
+        self.assertEqual([item["value"] for item in result["observations"]], ["1", "5"])
+
+    def test_reboot_requires_confirmation_and_permission_and_shares_operation_lock(self):
+        for body in ({}, {"confirm": False}, {"confirm": "true"}, {"confirm": True, "key": "Factory Reset"}):
+            self.assertEqual(self.client.post(f"{self.device_url}/reboot", json=body).status_code, 422)
+        self.assertEqual(self.client.post(f"{self.device_url}/5/read").status_code, 404)
+        self.assertEqual(self.client.post(f"{self.device_url}/4/read").status_code, 404)
+        self.reboot_allowed = False
+        self.assertEqual(self.client.post(f"{self.device_url}/reboot", json={"confirm": True}).status_code, 409)
+        self.assertFalse(any(request.method == "POST" for request in self.requests))
+        self.reboot_allowed = True
+        submission = self.client.post(f"{self.device_url}/reboot", json={"confirm": True})
+        self.assertEqual(submission.status_code, 202)
+        operation = submission.json()
+        self.assertEqual(operation["kind"], "reboot")
+        self.report_status = "InProgress"
+        self.assertEqual(self.write(6, False).status_code, 409)
+        posts = [r for r in self.requests if r.method == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(json.loads(posts[0].content)["taskDefinition"]["operations"], [
+            {"execute": {"key": "Device.0.Reboot"}},
+        ])
+        self.report_status = "Success"
+        self.assertEqual(self.check(operation).json()["state"], "succeeded")
+        self.assertEqual(self.write(6, False).status_code, 202)
 
     def test_discovers_typed_values_permissions_and_actual_server_instance(self):
         self.read_only.add(7)

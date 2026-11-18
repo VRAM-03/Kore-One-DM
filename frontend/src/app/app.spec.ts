@@ -4,7 +4,7 @@ import { vi } from 'vitest';
 import { Router, provideRouter } from '@angular/router';
 import { Subject, of, throwError } from 'rxjs';
 import { App } from './app';
-import { Device, DeviceApi, DeviceDetails } from './device-api';
+import { Device, DeviceApi, DeviceDetails, RegistrationLifetimeResult } from './device-api';
 import { DevicePage } from './device-page';
 
 const device: Device = {
@@ -31,11 +31,24 @@ describe('Device workspace', () => {
       activity: vi.fn().mockReturnValue(
         of({ recently_active: 1, unknown: 0, checked_at: '2026-11-16T00:00:00Z' }),
       ),
+      saveCoioteConfiguration: vi.fn().mockResolvedValue(undefined),
       detail: vi.fn().mockResolvedValue(detail),
       create: vi.fn().mockResolvedValue({ ...device, id: 2, endpoint_name: 'new-device' }),
       rename: vi.fn().mockResolvedValue({ ...device, friendly_name: 'Updated' }),
       delete: vi.fn().mockResolvedValue(undefined),
       resources: vi.fn().mockResolvedValue({ resources: [] }),
+      serverSettings: vi.fn().mockResolvedValue({ settings: [], unresolved_operation: null }),
+      readLifetime: vi.fn().mockResolvedValue({
+        task_id: 'lifetime-1',
+        device_id: 'remote-1',
+        resource: 'LwM2M Server.0.Lifetime',
+        operation: 'read',
+        state: 'succeeded',
+        requested_lifetime: null,
+        lifetime: 3600,
+        matches_requested: null,
+        observed_at: '2026-11-16T00:00:00Z',
+      } satisfies RegistrationLifetimeResult),
     };
     TestBed.configureTestingModule({
       imports: [App],
@@ -58,6 +71,36 @@ describe('Device workspace', () => {
     };
     return { api, fixture, app: fixture.componentInstance, element };
   }
+
+  it('shows a success banner after saving connector credentials and clears the dialog fields', async () => {
+    const { fixture, app, api, element } = setup();
+    await fixture.whenStable();
+    app.navigate('connector');
+    await fixture.whenStable();
+    const configure = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.connector-actions button'),
+    ).find((button) => button.textContent?.trim() === 'Configure')!;
+    configure.click();
+    await fixture.whenStable();
+    const dialog = element.querySelector('dialog')!;
+    const password = dialog.querySelector<HTMLInputElement>('[formControlName="password"]')!;
+    expect(dialog.open).toBe(true);
+    expect(password.type).toBe('password');
+    app.connectorForm.setValue({ username: ' test-account ', password: ' test-password ' });
+    dialog
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await fixture.whenStable();
+    expect(api.saveCoioteConfiguration).toHaveBeenCalledExactlyOnceWith(
+      'test-account',
+      ' test-password ',
+    );
+    expect(dialog.open).toBe(false);
+    expect(app.connectorForm.getRawValue()).toEqual({ username: '', password: '' });
+    expect(element.querySelector('.notification[role="status"]')?.textContent).toContain(
+      'Configuration Successful',
+    );
+  });
 
   it('shows stored contact history without pretending it proves current reachability', async () => {
     const { fixture, app, element } = setup();
@@ -476,11 +519,40 @@ describe('Device workspace', () => {
     expect(element.querySelector('.inventory-toolbar')).toBeNull();
     expect(api.detail).toHaveBeenCalledWith('lab-device');
     expect(api.list).toHaveBeenCalledTimes(1);
-    element.querySelector<HTMLAnchorElement>('.section-nav a[href$="#settings"]')!.click();
+    expect(element.querySelector('#overview')).not.toBeNull();
+    expect(element.querySelector('#settings')).toBeNull();
+    expect(api.serverSettings).not.toHaveBeenCalled();
+    expect(api.readLifetime).not.toHaveBeenCalled();
+    const settingsLink = element.querySelector<HTMLAnchorElement>(
+      '.section-nav a[href$="?view=settings"]',
+    )!;
+    settingsLink.click();
     await fixture.whenStable();
-    expect(TestBed.inject(Router).url).toBe('/devices/lab-device#settings');
+    expect(TestBed.inject(Router).url).toBe('/devices/lab-device?view=settings');
+    expect(settingsLink.getAttribute('aria-current')).toBe('page');
+    expect(element.querySelector('#overview')).toBeNull();
+    expect(element.querySelector('#settings #lwm2m-server-heading')).not.toBeNull();
+    expect(api.serverSettings).toHaveBeenCalledExactlyOnceWith('lab-device');
+    expect(api.readLifetime).toHaveBeenCalledExactlyOnceWith('lab-device');
     expect(api.detail).toHaveBeenCalledTimes(1);
-    expect(api.resources).toHaveBeenCalledTimes(1);
+    expect(api.resources).toHaveBeenCalledExactlyOnceWith('lab-device');
+    element.querySelector<HTMLButtonElement>('[data-setting-row="1"] .setting-edit')!.click();
+    await fixture.whenStable();
+    const lifetime = element.querySelector<HTMLInputElement>('#lifetime-seconds')!;
+    lifetime.value = '120';
+    lifetime.dispatchEvent(new Event('input', { bubbles: true }));
+    const overviewLink = element.querySelector<HTMLAnchorElement>('.section-nav a')!;
+    overviewLink.click();
+    await fixture.whenStable();
+    expect(TestBed.inject(Router).url).toBe('/devices/lab-device');
+    expect(overviewLink.getAttribute('aria-current')).toBe('page');
+    expect(element.querySelector('#overview')).not.toBeNull();
+    expect(element.querySelector('#settings')).toBeNull();
+    settingsLink.click();
+    await fixture.whenStable();
+    expect(element.querySelector<HTMLInputElement>('#lifetime-seconds')?.value).toBe('120');
+    expect(api.serverSettings).toHaveBeenCalledTimes(1);
+    expect(api.readLifetime).toHaveBeenCalledTimes(2);
     app.navigate('devices');
     await fixture.whenStable();
     fixture.detectChanges();

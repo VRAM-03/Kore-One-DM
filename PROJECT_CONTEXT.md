@@ -5,6 +5,11 @@ AVSystem Coiote is the first device-management connector. Explain steps for a Py
 
 ## Current project structure and operation (November 17)
 
+- November 18 follow-up merge from `asunny-01`: integrates the separate Settings
+  view and Device resource observations, fresh Reads, and confirmed Reboot
+  submission. Retains Timezone, registration-lifetime verification, Recently
+  active and the existing Keycloak client. The connector configuration form
+  stores salted hashes locally and does not change the active account.
 - Dashboard direction (November 18): show Devices and Recently active. At the
   user's request, the latter estimates contact within 120 seconds, refreshing
   every 30 seconds while the dashboard is open. A read-only activity endpoint

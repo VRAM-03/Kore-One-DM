@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from .database import Base, get_db
 from .device_lifetime import discover_server_resource
 from .device_operations import (
-    coiote_request, get_coiote_task_report, get_parameters, registered_device,
+    DataModelParameter, coiote_request, get_coiote_task_report, get_parameters, registered_device,
 )
 from .device_sync import coiote_request_error
 from .models import Device
@@ -66,6 +66,11 @@ SETTING_DEFINITIONS = {
     ]
 }
 
+DEVICE_RESOURCES = {
+    0: "Manufacturer", 1: "Model Number", 2: "Serial Number", 3: "Firmware Version",
+    4: "Reboot", 6: "Available Power Sources",
+}
+
 
 class ResourceMetadata(BaseModel):
     path: str
@@ -80,6 +85,19 @@ class ServerSetting(SettingDefinition):
     writable: bool = False
     value: SettingValue | None = None
     observed_at: datetime | None = None
+
+
+class DeviceResourceSetting(BaseModel):
+    resource_id: int
+    label: str
+    readable: bool = False
+    executable: bool = False
+    observations: list[DataModelParameter] = Field(default_factory=list)
+
+
+class RebootConfirmation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm: bool = Field(strict=True)
 
 
 class SettingUpdate(BaseModel):
@@ -116,12 +134,13 @@ class SettingOperation(BaseModel):
     id: str
     resource_id: int
     resource: str
-    kind: Literal["read", "write"]
+    kind: Literal["read", "write", "reboot"]
     state: Literal["pending", "submission_unknown", "succeeded", "failed", "verification_failed"]
     requested_value: SettingValue | None = None
     value: SettingValue | None = None
     observed_at: datetime | None = None
     error: str | None = None
+    observations: list[DataModelParameter] = Field(default_factory=list)
 
 
 class ServerSettingsResponse(BaseModel):
@@ -131,10 +150,12 @@ class ServerSettingsResponse(BaseModel):
 
 
 def operation_result(task: ServerSettingTask) -> SettingOperation:
+    observations = task.value if isinstance(task.value, list) else []
     return SettingOperation(
         id=task.id, resource_id=task.resource_id, resource=task.resource,
         kind=task.kind, state=task.state, requested_value=task.requested_value,
-        value=task.value, error=task.error,
+        value=None if isinstance(task.value, list) else task.value,
+        observations=observations, error=task.error,
         observed_at=(
             task.observed_at.replace(tzinfo=timezone.utc) if task.observed_at else None
         ),
@@ -255,21 +276,39 @@ async def submit_setting(
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from None
     device = registered_device(endpoint_name, db)
+    active_key = await require_idle(device, db)
+    setting = next(s for s in await discover_settings(device) if s.resource_id == resource_id)
+    if not setting.resource or not setting.readable or (kind == "write" and not setting.writable):
+        raise HTTPException(status_code=409, detail="This setting is not exposed with the required device permissions")
+    operations = []
+    if kind == "write":
+        serialized = str(value).lower() if type(value) is bool else str(value)
+        operations.append({"write": {"key": setting.resource, "value": serialized}})
+    operations.append({"read": {"key": setting.resource}})
+    return await queue_operation(device, active_key, resource_id, setting.resource, kind, value, operations, response, db)
+
+
+async def require_idle(device: Device, db: Session) -> str:
     active_key = f"{device.id}:{device.coiote_device_id}"
     active = db.query(ServerSettingTask).filter_by(active_device=active_key).first()
     if active is not None:
         await refresh_setting_task(active, db)
     if active is not None and active.active_device:
         raise HTTPException(status_code=409, detail={
-            "message": "A server setting operation is unresolved. Check its result before submitting another.",
+            "message": "A configuration operation is unresolved. Check its result before submitting another.",
             "operation_id": active.id,
         })
-    setting = next(s for s in await discover_settings(device) if s.resource_id == resource_id)
-    if not setting.readable or (kind == "write" and not setting.writable):
-        raise HTTPException(status_code=409, detail="This setting is not exposed with the required device permissions")
+    return active_key
+
+
+async def queue_operation(
+    device: Device, active_key: str, resource_id: int, resource: str,
+    kind: str, value: SettingValue | None, operations: list[dict[str, dict[str, str]]],
+    response: Response, db: Session,
+) -> SettingOperation:
     task = ServerSettingTask(
         id=uuid4().hex, local_device_id=device.id, coiote_device_id=device.coiote_device_id,
-        resource_id=resource_id, resource=setting.resource, kind=kind,
+        resource_id=resource_id, resource=resource, kind=kind,
         state="submission_unknown", requested_value=value, active_device=active_key,
         error="Submission has not yet been confirmed. Do not retry.",
     )
@@ -279,11 +318,6 @@ async def submit_setting(
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Another server setting operation was submitted; reload its result before retrying") from None
-    operations = []
-    if kind == "write":
-        serialized = str(value).lower() if type(value) is bool else str(value)
-        operations.append({"write": {"key": setting.resource, "value": serialized}})
-    operations.append({"read": {"key": setting.resource}})
     try:
         provider_id = await coiote_request(
             "POST", f"/tasks/configure/{quote(device.coiote_device_id, safe='')}",
@@ -302,13 +336,107 @@ async def submit_setting(
         if isinstance(error, httpx.HTTPStatusError) and 400 <= error.response.status_code < 500:
             task.state = "failed"
             task.active_device = None
-            task.error = "The connector rejected the server setting request."
+            task.error = "The connector rejected the configuration request."
         else:
             task.error = "Submission is unconfirmed. Verify the device state in the connector before retrying."
     db.commit()
     response.status_code = 202 if task.active_device else 200
     response.headers["Cache-Control"] = "no-store"
     return operation_result(task)
+
+
+def device_resource_key(resource_id: int) -> str:
+    return f"Device.0.{DEVICE_RESOURCES[resource_id]}"
+
+
+def device_observations(
+    parameters: list[DataModelParameter], key: str, resource_id: int,
+) -> list[DataModelParameter]:
+    matches = [
+        item for item in parameters
+        if (re.fullmatch(re.escape(key) + r"\.[0-9]+", item.name) is not None
+            if resource_id == 6 else item.name == key)
+    ]
+    if len({item.name for item in matches}) != len(matches):
+        raise ValueError("Duplicate Device resource observation")
+    return matches
+
+
+async def device_resource_metadata(device: Device) -> dict[int, ResourceMetadata]:
+    raw = await coiote_request(
+        "GET", f"/instantiatedResources/resourcesData/{quote(device.coiote_device_id, safe='')}",
+        params={"parameters": "Device"},
+    )
+    metadata = {}
+    for entry in TypeAdapter(list[ResourceMetadata]).validate_python(raw):
+        resource_id = entry.resourceId
+        if resource_id in DEVICE_RESOURCES and entry.path == device_resource_key(resource_id):
+            if resource_id in metadata:
+                raise ValueError("Duplicate Device resource")
+            metadata[resource_id] = entry
+    return metadata
+
+
+@router.get("/devices/{endpoint_name}/device-settings", response_model=list[DeviceResourceSetting])
+async def list_device_settings(
+    endpoint_name: str, response: Response, db: Session = Depends(get_db),
+):
+    response.headers["Cache-Control"] = "no-store"
+    device = registered_device(endpoint_name, db)
+    try:
+        metadata = await device_resource_metadata(device)
+        parameters = await get_parameters(device.coiote_device_id, "Device.0.")
+        resources = []
+        for resource_id, label in DEVICE_RESOURCES.items():
+            entry = metadata.get(resource_id)
+            readable = resource_id != 4 and entry is not None and "Read" in entry.operations
+            executable = resource_id == 4 and entry is not None and "Execute" in entry.operations
+            resources.append(DeviceResourceSetting(
+                resource_id=resource_id, label=label, readable=readable, executable=executable,
+                observations=device_observations(parameters, entry.path, resource_id) if readable and entry else [],
+            ))
+        return resources
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        raise coiote_request_error(error) from None
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Coiote returned invalid Device resources") from None
+
+
+async def submit_device_resource(
+    endpoint_name: str, resource_id: int, reboot: bool, response: Response, db: Session,
+) -> SettingOperation:
+    if resource_id not in DEVICE_RESOURCES or (resource_id == 4) != reboot:
+        raise HTTPException(status_code=404, detail="Device resource operation is not supported")
+    device = registered_device(endpoint_name, db)
+    active_key = await require_idle(device, db)
+    try:
+        entry = (await device_resource_metadata(device)).get(resource_id)
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        raise coiote_request_error(error) from None
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Coiote returned invalid Device resources") from None
+    if entry is None or ("Execute" if reboot else "Read") not in entry.operations:
+        raise HTTPException(status_code=409, detail="Device does not expose the required operation")
+    return await queue_operation(
+        device, active_key, resource_id, entry.path, "reboot" if reboot else "read", None,
+        [{"execute" if reboot else "read": {"key": entry.path}}], response, db,
+    )
+
+
+@router.post("/devices/{endpoint_name}/device-settings/{resource_id}/read", response_model=SettingOperation)
+async def read_device_setting(
+    endpoint_name: str, resource_id: int, response: Response, db: Session = Depends(get_db),
+):
+    return await submit_device_resource(endpoint_name, resource_id, False, response, db)
+
+
+@router.post("/devices/{endpoint_name}/device-settings/reboot", response_model=SettingOperation)
+async def reboot_device(
+    endpoint_name: str, confirmation: RebootConfirmation, response: Response, db: Session = Depends(get_db),
+):
+    if not confirmation.confirm:
+        raise HTTPException(status_code=422, detail="Reboot must be explicitly confirmed")
+    return await submit_device_resource(endpoint_name, 4, True, response, db)
 
 
 @router.post("/devices/{endpoint_name}/server-settings/{resource_id}/read", response_model=SettingOperation)
@@ -351,7 +479,16 @@ async def refresh_setting_task(task: ServerSettingTask, db: Session) -> SettingO
             return operation_result(task)
         if report.status in {"Error", "Warning"}:
             task.state = "failed"
-            task.error = "The device could not complete the server setting operation."
+            task.error = "The device could not complete the configuration operation."
+        elif task.kind == "reboot":
+            task.state = "succeeded"
+        elif task.resource.startswith("Device.0."):
+            parameters = await get_parameters(task.coiote_device_id, task.resource)
+            observations = device_observations(parameters, task.resource, task.resource_id)
+            if not observations or any(item.updateTime < report.startTime for item in observations):
+                return operation_result(task)
+            task.value = [item.model_dump(mode="json") for item in observations]
+            task.state = "succeeded"
         else:
             parameters = await get_parameters(task.coiote_device_id, task.resource)
             matches = [p for p in parameters if p.name == task.resource]

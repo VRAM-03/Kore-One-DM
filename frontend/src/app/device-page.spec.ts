@@ -96,6 +96,12 @@ const pendingTimezone: DeviceOperation = {
 describe('Device communication page', () => {
   afterEach(() => vi.useRealTimers());
 
+  function chooseSetting(element: HTMLElement, id: number, mode: 'view' | 'edit') {
+    element
+      .querySelector<HTMLButtonElement>(`[data-setting-row="${id}"] .setting-${mode}`)!
+      .click();
+  }
+
   function setup() {
     const params = new BehaviorSubject(convertToParamMap({ endpoint: 'lab' }));
     const api = {
@@ -124,6 +130,38 @@ describe('Device communication page', () => {
         requested_value: 'Asia/Kolkata',
       }),
       readLifetime: vi.fn().mockResolvedValue(lifetimeRead),
+      deviceSettings: vi.fn().mockResolvedValue([
+        {
+          resource_id: 0,
+          label: 'Manufacturer',
+          readable: true,
+          executable: false,
+          observations: [],
+        },
+        ...['Model Number', 'Serial Number', 'Firmware Version'].map((label, index) => ({
+          resource_id: index + 1,
+          label,
+          readable: true,
+          executable: false,
+          observations: [],
+        })),
+        { resource_id: 4, label: 'Reboot', readable: false, executable: true, observations: [] },
+        {
+          resource_id: 6,
+          label: 'Available Power Sources',
+          readable: true,
+          executable: false,
+          observations: [
+            {
+              name: 'Device.0.Available Power Sources.3',
+              value: '5',
+              updateTime: '2026-11-17T09:00:00Z',
+            },
+          ],
+        },
+      ]),
+      rebootDevice: vi.fn(),
+      readDeviceSetting: vi.fn(),
       serverSettings: vi.fn().mockResolvedValue({
         settings: serverSettings,
         unresolved_operation: null,
@@ -154,7 +192,13 @@ describe('Device communication page', () => {
       imports: [DevicePage],
       providers: [
         provideRouter([]),
-        { provide: ActivatedRoute, useValue: { paramMap: params } },
+        {
+          provide: ActivatedRoute,
+          useValue: {
+            paramMap: params,
+            queryParamMap: new BehaviorSubject(convertToParamMap({ view: 'settings' })),
+          },
+        },
         { provide: DeviceApi, useValue: api },
       ],
     });
@@ -169,27 +213,111 @@ describe('Device communication page', () => {
     };
   }
 
-  it('automatically shows all nine server settings without a load button or device commands', async () => {
+  it('automatically shows all nine server settings and the latest confirmed lifetime without submitting a write', async () => {
     const { fixture, api, element } = setup();
     await fixture.whenStable();
     fixture.detectChanges();
     expect(api.detail).toHaveBeenCalledWith('lab');
     expect(api.resources).toHaveBeenCalledWith('lab');
     expect(api.read).not.toHaveBeenCalled();
-    expect(api.readLifetime).not.toHaveBeenCalled();
+    expect(api.readLifetime).toHaveBeenCalledExactlyOnceWith('lab');
     expect(api.writeLifetime).not.toHaveBeenCalled();
     expect(api.serverSettings).toHaveBeenCalledExactlyOnceWith('lab');
     expect(api.writeServerSetting).not.toHaveBeenCalled();
     expect(api.readServerSetting).not.toHaveBeenCalled();
-    expect(element.querySelectorAll('#lwm2m-server-content .settings-card')).toHaveLength(9);
+    expect(element.querySelectorAll('.settings-table tbody tr')).toHaveLength(9);
+    expect(element.querySelectorAll('#configuration-detail .settings-card')).toHaveLength(1);
+    expect(element.querySelector('.lifetime-current strong')?.textContent).toContain(
+      '3600 seconds',
+    );
+    expect(element.textContent).not.toContain("Current values are the connector's stored");
+    expect(element.textContent).not.toContain('Latest confirmed lifetime loaded.');
     expect(element.textContent).not.toContain('Load server settings');
     expect(element.textContent).not.toContain('Reload server settings');
     expect(element.textContent).toContain('Lab sensor');
-    expect(
-      element.querySelector<HTMLButtonElement>(
-        '.lifetime-card .configuration-editor .button.primary',
-      )?.disabled,
-    ).toBe(true);
+    expect(element.querySelector('#configuration-detail .configuration-editor')).toBeNull();
+    expect(element.querySelector('.settings-table')?.textContent).not.toContain('3600');
+  });
+
+  it('shows Device observations and requires confirmation before queuing Reboot', async () => {
+    const { fixture, api, element, page } = setup();
+    await fixture.whenStable();
+    vi.useFakeTimers();
+    element.querySelector<HTMLElement>('#device-settings-heading')!.click();
+    await Promise.resolve();
+    fixture.detectChanges();
+    expect(api.deviceSettings).toHaveBeenCalledExactlyOnceWith('lab');
+    expect(element.querySelector('.settings-table')?.textContent).not.toContain(
+      'Registration lifetime',
+    );
+    chooseSetting(element, 6, 'view');
+    fixture.detectChanges();
+    expect(element.querySelector('#configuration-detail table tbody')?.textContent).toMatch(
+      /3\s*5/,
+    );
+    expect(element.querySelector('.settings-table .setting-edit')).toBeNull();
+    expect(element.querySelectorAll('.settings-table .setting-read-only')).toHaveLength(5);
+    expect(element.querySelector('[data-setting-row="4"] .setting-read-only')).toBeNull();
+    expect(api.readDeviceSetting).not.toHaveBeenCalled();
+    chooseSetting(element, 4, 'view');
+    fixture.detectChanges();
+    const detailPane = element.querySelector('#configuration-detail')!;
+    detailPane.querySelector<HTMLButtonElement>('.button.secondary')!.click();
+    fixture.detectChanges();
+    expect(api.rebootDevice).not.toHaveBeenCalled();
+    detailPane.querySelector<HTMLButtonElement>('.button.quiet')!.click();
+    fixture.detectChanges();
+    expect(api.rebootDevice).not.toHaveBeenCalled();
+    const pending = {
+      ...pendingSetting,
+      kind: 'reboot',
+      resource_id: 4,
+      resource: 'Device.0.Reboot',
+      requested_value: null,
+    };
+    api.rebootDevice.mockResolvedValue(pending);
+    api.serverSettingOperation.mockResolvedValue({ ...pending, state: 'succeeded' });
+    detailPane.querySelector<HTMLButtonElement>('.button.secondary')!.click();
+    fixture.detectChanges();
+    detailPane.querySelector<HTMLButtonElement>('.button.primary')!.click();
+    await vi.advanceTimersByTimeAsync(2100);
+    fixture.detectChanges();
+    expect(api.rebootDevice).toHaveBeenCalledExactlyOnceWith('lab');
+    expect(page.serverOperation()?.state).toBe('succeeded');
+    expect(detailPane.textContent).toContain('does not confirm the device is back online');
+  });
+
+  it('shows a short description and matching help for each Device resource', async () => {
+    const { fixture, api, element } = setup();
+    await fixture.whenStable();
+    element.querySelector<HTMLElement>('#device-settings-heading')!.click();
+    await fixture.whenStable();
+
+    for (const [id, label, summary, detail] of [
+      [0, 'Manufacturer', 'manufacturer reported', 'who made the device'],
+      [1, 'Model Number', 'model number reported', 'checking compatibility'],
+      [2, 'Serial Number', 'serial number reported', 'distinguish individual units'],
+      [3, 'Firmware Version', 'firmware version reported', 'After an update'],
+      [4, 'Reboot', 'may briefly interrupt communication', 'requires confirmation'],
+      [6, 'Available Power Sources', 'power sources the device reports', 'battery charge level'],
+    ] as const) {
+      chooseSetting(element, id, 'view');
+      await fixture.whenStable();
+      const card = element.querySelector('#configuration-detail .settings-card')!;
+      expect(card.querySelector('.metadata-note')?.textContent).toContain(summary);
+      const toggle = card.querySelector<HTMLButtonElement>('.setting-info-toggle')!;
+      expect(toggle.getAttribute('aria-label')).toBe(`About ${label}`);
+      const panel = card.querySelector<HTMLElement>(`#${toggle.getAttribute('aria-controls')}`)!;
+      expect(panel.hidden).toBe(true);
+      toggle.click();
+      await fixture.whenStable();
+      expect(panel.hidden).toBe(false);
+      expect(panel.textContent).toContain(detail);
+      expect(panel.querySelector('a')?.getAttribute('href')).toContain('/3.xml');
+    }
+
+    expect(api.readDeviceSetting).not.toHaveBeenCalled();
+    expect(api.rebootDevice).not.toHaveBeenCalled();
   });
 
   it('retains the timezone read-before-write flow beside the server settings', async () => {
@@ -253,14 +381,10 @@ describe('Device communication page', () => {
     expect(element.querySelector('#settings h2')?.textContent).toContain(
       'Settings & configuration',
     );
-    const settingTitles = Array.from(
-      element.querySelectorAll('#settings .configuration-title'),
-    ).map((heading) => heading.textContent?.trim());
-    expect(settingTitles).toEqual([
-      'Registration lifetime',
-      ...serverSettings.map((s) => s.label),
-      'Timezone',
-    ]);
+    const settingTitles = Array.from(element.querySelectorAll('.settings-table [scope="row"]')).map(
+      (heading) => heading.textContent?.trim(),
+    );
+    expect(settingTitles).toEqual(['Registration lifetime', ...serverSettings.map((s) => s.label)]);
     expect(element.querySelector('#lwm2m-server-heading')?.textContent).toBe('LwM2M server');
     expect(element.querySelector('#settings')?.textContent).toContain('Timezone');
     expect(element.querySelector('#settings')?.textContent).toContain('Read timezone');
@@ -268,11 +392,13 @@ describe('Device communication page', () => {
     expect(element.textContent).not.toContain('Manufacturer');
     expect(element.textContent).not.toContain('Model number');
     expect(element.textContent).not.toContain('Firmware version');
+    chooseSetting(element, 1, 'edit');
+    fixture.detectChanges();
     const card = element.querySelector<HTMLElement>('.lifetime-card')!;
     expect(card.textContent).not.toContain('UI only');
-    const info = card.querySelector<HTMLElement>('.lifetime-info-panel')!;
+    const info = card.querySelector<HTMLElement>('.setting-info-panel')!;
     expect(info.hidden).toBe(true);
-    const infoToggle = card.querySelector<HTMLButtonElement>('.lifetime-info-toggle')!;
+    const infoToggle = card.querySelector<HTMLButtonElement>('.setting-info-toggle')!;
     expect(infoToggle.getAttribute('aria-label')).toBe('About registration lifetime');
     expect(infoToggle.textContent?.trim()).toBe('');
     infoToggle.click();
@@ -282,10 +408,11 @@ describe('Device communication page', () => {
     infoToggle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     fixture.detectChanges();
     expect(info.hidden).toBe(true);
-    expect(api.readLifetime).not.toHaveBeenCalled();
+    expect(api.readLifetime).toHaveBeenCalledTimes(1);
     expect(api.writeLifetime).not.toHaveBeenCalled();
-    expect(card.textContent).toContain('latest confirmed value');
-    expect(card.textContent).toContain('stored confirmed value');
+    expect(card.querySelector('#lifetime-value-note')?.textContent).toContain(
+      "the device's registration stays valid",
+    );
     const input = card.querySelector<HTMLInputElement>('input')!;
     expect(input.value).toBe('');
     input.value = '120';
@@ -306,21 +433,76 @@ describe('Device communication page', () => {
     expect(input.value).toBe('');
   });
 
-  it('loads the latest confirmed lifetime only after the user requests it', async () => {
+  it('refreshes the automatically loaded lifetime through either refresh action', async () => {
     const { fixture, page, api, element } = setup();
     await fixture.whenStable();
-    const read = Array.from(
-      element.querySelectorAll<HTMLButtonElement>('.lifetime-card button'),
-    ).find((button) => button.textContent?.includes('Show current lifetime'))!;
+    fixture.detectChanges();
+    api.readLifetime.mockResolvedValueOnce({ ...lifetimeRead, lifetime: 1800 });
+    const read = element.querySelector<HTMLButtonElement>('.lifetime-current button')!;
+    expect(read.disabled).toBe(false);
     read.click();
     await fixture.whenStable();
     fixture.detectChanges();
     expect(api.readLifetime).toHaveBeenCalledWith('lab');
-    expect(page.lifetimeResult()?.lifetime).toBe(3600);
+    expect(page.lifetimeResult()?.lifetime).toBe(1800);
     expect(element.querySelector('.lifetime-current strong')?.textContent).toContain(
-      '3600 seconds',
+      '1800 seconds',
     );
     expect(element.querySelector('.lifetime-current .reading-time')?.textContent).toContain('UTC');
+    page.lifetimeDraft.setValue(120);
+    api.readLifetime.mockResolvedValueOnce({ ...lifetimeRead, lifetime: 2400 });
+    element.querySelector<HTMLButtonElement>('.device-page-heading button')!.click();
+    await fixture.whenStable();
+    expect(element.querySelector('.lifetime-current strong')?.textContent).toContain(
+      '2400 seconds',
+    );
+    expect(page.lifetimeDraft.value).toBe(120);
+    expect(api.readLifetime).toHaveBeenCalledTimes(3);
+  });
+
+  it('opens resource-specific help for each server setting without sending device commands', async () => {
+    const { fixture, api, element } = setup();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const summaries = [
+      'queue capacity',
+      'transport binding',
+      'preceding server',
+      'consecutive communication attempts',
+      'retry delay doubles',
+      'no new sequence',
+      'consecutive communication sequences',
+      'client-initiated LwM2M Send',
+    ];
+    let previousPanel: HTMLElement | undefined;
+    let lastToggle: HTMLButtonElement | undefined;
+    for (const [index, setting] of serverSettings.entries()) {
+      chooseSetting(element, setting.resource_id, 'view');
+      await fixture.whenStable();
+      const card = element.querySelector(`[data-resource-id="${setting.resource_id}"]`)!;
+      expect(card.querySelector('.configuration-editor')).toBeNull();
+      const toggle = card.querySelector<HTMLButtonElement>('.setting-info-toggle')!;
+      const panel = card.querySelector<HTMLElement>('.setting-info-panel')!;
+      expect(toggle.getAttribute('aria-label')).toBe(`About ${setting.label}`);
+      expect(toggle.getAttribute('aria-controls')).toBe(panel.id);
+      expect(panel.hidden).toBe(true);
+      toggle.click();
+      await fixture.whenStable();
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(panel.hidden).toBe(false);
+      expect(panel.textContent?.toLowerCase()).toContain(summaries[index].toLowerCase());
+      if (previousPanel) expect(element.contains(previousPanel)).toBe(false);
+      previousPanel = panel;
+      lastToggle = toggle;
+    }
+    previousPanel!
+      .querySelector('a')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await fixture.whenStable();
+    expect(previousPanel!.hidden).toBe(true);
+    expect(lastToggle!.getAttribute('aria-expanded')).toBe('false');
+    expect(api.readServerSetting).not.toHaveBeenCalled();
+    expect(api.writeServerSetting).not.toHaveBeenCalled();
   });
 
   it('shows a verified lifetime mismatch without claiming the write succeeded', async () => {
@@ -349,6 +531,8 @@ describe('Device communication page', () => {
   it('updates lifetime action buttons after typing without forcing change detection', async () => {
     const { fixture, api, element } = setup();
     await fixture.whenStable();
+    chooseSetting(element, 1, 'edit');
+    await fixture.whenStable();
     const input = element.querySelector<HTMLInputElement>('#lifetime-seconds')!;
     const apply = element.querySelector<HTMLButtonElement>('.lifetime-card .button.primary')!;
     const discard = element.querySelector<HTMLButtonElement>('.lifetime-card .button.quiet')!;
@@ -373,8 +557,10 @@ describe('Device communication page', () => {
     await page.loadServerSettings();
     await fixture.whenStable();
     expect(element.querySelector('#lwm2m-server-content input[type="checkbox"]')).toBeNull();
-    const cards = Array.from(element.querySelectorAll<HTMLElement>('.server-setting-card'));
-    for (const card of cards) {
+    for (const setting of serverSettings) {
+      chooseSetting(element, setting.resource_id, 'edit');
+      await fixture.whenStable();
+      const card = element.querySelector<HTMLElement>('.server-setting-card')!;
       const input = card.querySelector<HTMLInputElement>('input');
       const select = card.querySelector<HTMLSelectElement>('select');
       if (input) {
@@ -384,15 +570,11 @@ describe('Device communication page', () => {
         select.selectedIndex = 2;
         select.dispatchEvent(new Event('change', { bubbles: true }));
       }
-    }
-    await fixture.whenStable();
-    for (const card of cards) {
+      await fixture.whenStable();
       expect(card.querySelector<HTMLButtonElement>('.button.quiet')!.disabled).toBe(false);
       expect(card.querySelector<HTMLButtonElement>('.button.primary')!.disabled).toBe(false);
       card.querySelector<HTMLButtonElement>('.button.quiet')!.click();
-    }
-    await fixture.whenStable();
-    for (const card of cards) {
+      await fixture.whenStable();
       expect(card.querySelector<HTMLButtonElement>('.button.primary')!.disabled).toBe(true);
       expect(card.querySelector<HTMLButtonElement>('.button.quiet')!.disabled).toBe(true);
     }
@@ -416,26 +598,55 @@ describe('Device communication page', () => {
     expect(api.writeLifetime).toHaveBeenCalledTimes(1);
   });
 
+  it('allows viewing a read-only setting but does not offer an active editor', async () => {
+    const { fixture, page, api, element } = setup();
+    await fixture.whenStable();
+    api.serverSettings.mockResolvedValueOnce({
+      settings: serverSettings.map((setting) =>
+        setting.resource_id === 7 ? { ...setting, writable: false } : setting,
+      ),
+      unresolved_operation: null,
+    });
+    await page.loadServerSettings();
+    await fixture.whenStable();
+    const row = element.querySelector('[data-setting-row="7"]')!;
+    const lock = row.querySelector('.setting-read-only')!;
+    expect(lock.getAttribute('title')).toBe('This resource is read-only.');
+    expect(lock.getAttribute('aria-label')).toBe(lock.getAttribute('title'));
+    expect(row.querySelector('.setting-edit')).toBeNull();
+    expect(element.querySelector('[data-setting-row="1"] .setting-read-only')).toBeNull();
+    chooseSetting(element, 7, 'view');
+    await fixture.whenStable();
+    expect(element.querySelector('#configuration-detail .configuration-title')?.textContent).toBe(
+      'Binding',
+    );
+    expect(element.querySelector('#configuration-detail .configuration-editor')).toBeNull();
+    expect(api.writeServerSetting).not.toHaveBeenCalled();
+    expect(api.readServerSetting).not.toHaveBeenCalled();
+  });
+
   it('loads all eight extra settings with typed controls and no executable commands', async () => {
     const { fixture, page, api, element } = setup();
     await fixture.whenStable();
     await page.loadServerSettings();
     fixture.detectChanges();
     expect(api.serverSettings).toHaveBeenCalledWith('lab');
-    expect(element.querySelectorAll('.server-setting-card')).toHaveLength(8);
-    expect(element.querySelectorAll('.server-setting-card select')).toHaveLength(2);
-    expect(element.querySelectorAll('.server-setting-card input[type="number"]')).toHaveLength(5);
-    expect(element.querySelectorAll('.server-setting-card input[type="text"]')).toHaveLength(1);
     expect(element.textContent).not.toContain('Bootstrap');
     expect(element.querySelector('.timezone-card')?.textContent).toContain('Timezone');
     const setting = page.serverSettings()[7];
     expect(setting.value).toBe(false);
+    chooseSetting(element, 23, 'view');
+    fixture.detectChanges();
     expect(element.querySelector('[data-resource-id="23"] strong')?.textContent).toContain('false');
     expect(api.writeServerSetting).not.toHaveBeenCalled();
+    chooseSetting(element, 6, 'edit');
+    fixture.detectChanges();
     const notification = element.querySelector<HTMLSelectElement>('[data-resource-id="6"] select')!;
     notification.selectedIndex = 2;
     notification.dispatchEvent(new Event('change', { bubbles: true }));
     expect(page.serverDraft(page.serverSettings()[0]).value).toBe(false);
+    chooseSetting(element, 18, 'edit');
+    fixture.detectChanges();
     const retry = element.querySelector<HTMLInputElement>('[data-resource-id="18"] input')!;
     retry.value = '120';
     retry.dispatchEvent(new Event('input', { bubbles: true }));
@@ -478,13 +689,12 @@ describe('Device communication page', () => {
     fixture.detectChanges();
     const content = element.querySelector<HTMLElement>('#lwm2m-server-content')!;
     const toggle = element.querySelector<HTMLButtonElement>('.server-group-toggle')!;
-    expect(content.querySelectorAll('.settings-card')).toHaveLength(9);
+    expect(content.querySelectorAll('.settings-table tbody tr')).toHaveLength(9);
     expect(content.querySelector('.lifetime-card')).not.toBeNull();
     expect(toggle.getAttribute('aria-controls')).toBe(content.id);
     toggle.click();
     fixture.detectChanges();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(toggle.getAttribute('aria-label')).toBe('Expand LwM2M server');
     expect(content.hidden).toBe(true);
     await vi.advanceTimersByTimeAsync(2000);
     expect(page.serverOperation()?.state).toBe('succeeded');
@@ -649,6 +859,7 @@ describe('Device communication page', () => {
     params.next(convertToParamMap({ endpoint: 'other' }));
     resolve({ settings: serverSettings, unresolved_operation: null });
     await loading;
+    await fixture.whenStable();
     expect(page.serverSettings()).toEqual([]);
     expect(page.serverOperation()).toBeNull();
     expect(api.serverSettings).toHaveBeenLastCalledWith('other');
@@ -658,11 +869,12 @@ describe('Device communication page', () => {
     const { fixture, page, api, params } = setup();
     await fixture.whenStable();
     let resolve!: (value: RegistrationLifetimeResult) => void;
-    api.readLifetime.mockReturnValue(
+    api.readLifetime.mockReturnValueOnce(
       new Promise<RegistrationLifetimeResult>((r) => {
         resolve = r;
       }),
     );
+    api.readLifetime.mockResolvedValueOnce({ ...lifetimeRead, lifetime: 1800 });
     const reading = page.readLifetime();
     page.lifetimeDraft.setValue(120);
     params.next(convertToParamMap({ endpoint: 'other' }));
@@ -670,8 +882,9 @@ describe('Device communication page', () => {
     await reading;
     await fixture.whenStable();
     expect(page.endpoint()).toBe('other');
-    expect(page.lifetimeResult()).toBeNull();
+    expect(page.lifetimeResult()?.lifetime).toBe(1800);
     expect(page.lifetimeDraft.value).toBeNull();
     expect(api.detail).toHaveBeenLastCalledWith('other');
+    expect(api.readLifetime).toHaveBeenLastCalledWith('other');
   });
 });

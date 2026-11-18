@@ -7,484 +7,778 @@
     </div>
     <button
       class="button quiet"
-      (click)="loadDetails()"
+      (click)="reloadDevicePage()"
       [disabled]="loading()"
-      title="Reload stored details; does not refresh Coiote"
+      [title]="
+        showingSettings()
+          ? 'Reload stored details and the latest confirmed lifetime'
+          : 'Reload stored details; does not refresh Coiote'
+      "
     >
       <app-icon name="refresh-cw" /> Reload details
     </button>
   </div>
   <nav class="section-nav" aria-label="Device sections">
-    <a [routerLink]="['/devices', endpoint()]" fragment="overview">Overview</a>
-    <a [routerLink]="['/devices', endpoint()]" fragment="settings">Settings &amp; configuration</a>
+    <a
+      [routerLink]="['/devices', endpoint()]"
+      [attr.aria-current]="showingSettings() ? null : 'page'"
+    >
+      Overview
+    </a>
+    <a
+      [routerLink]="['/devices', endpoint()]"
+      [queryParams]="{ view: 'settings' }"
+      [attr.aria-current]="showingSettings() ? 'page' : null"
+    >
+      Settings &amp; configuration
+    </a>
   </nav>
 
-  <section id="overview">
-    <h2>Overview</h2>
-    @if (pageError()) {
-      <p class="form-error" role="alert">{{ pageError() }}</p>
-    } @else if (loading()) {
-      <p role="status">Loading device details…</p>
-    } @else if (details(); as detail) {
-      <dl class="detail-grid overview-grid">
-        <div>
-          <dt>Local ID</dt>
-          <dd>{{ detail.local.id }}</dd>
-        </div>
-        <div>
-          <dt>Coiote device ID</dt>
-          <dd>{{ detail.local.coiote_device_id || '—' }}</dd>
-        </div>
-        <div>
-          <dt>Security mode</dt>
-          <dd>{{ detail.local.security_mode || '—' }}</dd>
-        </div>
-        <div>
-          <dt>Onboarding</dt>
-          <dd>{{ detail.local.onboarding_status?.replaceAll('_', ' ') || '—' }}</dd>
-        </div>
-        <div>
-          <dt>Connection history</dt>
-          <dd>
-            {{
-              detail.local.connection_status === 'unknown'
-                ? 'Reachability unknown'
-                : detail.local.connection_status?.replaceAll('_', ' ') || 'Not refreshed'
-            }}
-          </dd>
-        </div>
-        <div>
-          <dt>Created (UTC)</dt>
-          <dd>
-            {{ detail.local.created_at ? (detail.local.created_at | date: 'medium' : 'UTC') : '—' }}
-          </dd>
-        </div>
-        <div>
-          <dt>First registered (UTC)</dt>
-          <dd>
-            {{
-              detail.local.first_registered_at
-                ? (detail.local.first_registered_at | date: 'medium' : 'UTC')
-                : '—'
-            }}
-          </dd>
-        </div>
-        <div>
-          <dt>Last registered (UTC)</dt>
-          <dd>
-            {{
-              detail.local.last_registered_at
-                ? (detail.local.last_registered_at | date: 'medium' : 'UTC')
-                : '—'
-            }}
-          </dd>
-        </div>
-        <div>
-          <dt>Last seen (UTC)</dt>
-          <dd>
-            {{
-              detail.local.last_seen_at ? (detail.local.last_seen_at | date: 'medium' : 'UTC') : '—'
-            }}
-          </dd>
-        </div>
-        <div>
-          <dt>Last Coiote metadata refresh (UTC)</dt>
-          <dd>
-            {{
-              detail.local.refreshed_at ? (detail.local.refreshed_at | date: 'medium' : 'UTC') : '—'
-            }}
-          </dd>
-        </div>
-        <div>
-          <dt>Connector type</dt>
-          <dd>{{ detail.coiote_snapshot?.connector_type || '—' }}</dd>
-        </div>
-        <div>
-          <dt>Domain</dt>
-          <dd>{{ detail.coiote_snapshot?.domain || '—' }}</dd>
-        </div>
-      </dl>
-    }
-  </section>
-
-  @if (resourceLoading()) {
-    <p class="metadata-note" role="status">Checking device resources…</p>
-  }
-  @if (resourceError()) {
-    <div class="form-error" role="alert">
-      <span>{{ resourceError() }}</span>
-      <button class="button secondary" (click)="loadResources()" [disabled]="resourceLoading()">
-        Retry resources
-      </button>
-    </div>
-  }
-
-  <section id="settings">
-    <h2>Settings &amp; configuration</h2>
-    <div class="server-group-heading">
-      <h3 id="lwm2m-server-heading">LwM2M server</h3>
-      <button
-        class="icon-button server-group-toggle"
-        type="button"
-        [class.expanded]="serverSectionOpen()"
-        [attr.aria-label]="serverSectionOpen() ? 'Collapse LwM2M server' : 'Expand LwM2M server'"
-        [attr.aria-expanded]="serverSectionOpen()"
-        aria-controls="lwm2m-server-content"
-        (click)="serverSectionOpen.set(!serverSectionOpen())"
-      >
-        <app-icon name="chevron-right" />
-      </button>
-    </div>
-    <div
-      id="lwm2m-server-content"
-      role="region"
-      aria-labelledby="lwm2m-server-heading"
-      [hidden]="!serverSectionOpen()"
-    >
-      <div class="settings-card lifetime-card">
-        <div class="configuration-heading" (keydown.escape)="lifetimeInfoOpen.set(false)">
-          <h4 class="configuration-title"><app-icon name="clock" /> Registration lifetime</h4>
-          <button
-            class="icon-button lifetime-info-toggle"
-            type="button"
-            aria-label="About registration lifetime"
-            title="About registration lifetime"
-            aria-controls="lifetime-info"
-            [attr.aria-expanded]="lifetimeInfoOpen()"
-            (click)="lifetimeInfoOpen.set(!lifetimeInfoOpen())"
-          >
-            <app-icon name="circle-help" />
-          </button>
-          <div id="lifetime-info" class="lifetime-info-panel" [hidden]="!lifetimeInfoOpen()">
-            <p>
-              Lifetime is the registration validity period, in seconds, for a LwM2M server. The
-              client renews its registration with an Update before it expires.
-            </p>
-            <p>
-              Shorter lifetimes generally mean more registration traffic and power use. Longer
-              lifetimes allow a longer gap before registration expires. Lifetime is not a
-              sensor-reporting interval or proof that the device is currently online.
-            </p>
-            <p>
-              AVSystem's Anjay example uses a 60-second lifetime and shows Updates about every 30
-              seconds. The exact Update schedule depends on the client and transport settings.
-            </p>
-            <a
-              href="https://docs.avsystem.com/hubfs/Anjay_Docs/BasicClient/BC-MandatoryObjects.html#server-object"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              AVSystem documentation <app-icon name="external-link" />
-            </a>
+  @if (!showingSettings()) {
+    <section id="overview">
+      <h2>Overview</h2>
+      @if (pageError()) {
+        <p class="form-error" role="alert">{{ pageError() }}</p>
+      } @else if (loading()) {
+        <p role="status">Loading device details…</p>
+      } @else if (details(); as detail) {
+        <dl class="detail-grid overview-grid">
+          <div>
+            <dt>Local ID</dt>
+            <dd>{{ detail.local.id }}</dd>
           </div>
+          <div>
+            <dt>Coiote device ID</dt>
+            <dd>{{ detail.local.coiote_device_id || '—' }}</dd>
+          </div>
+          <div>
+            <dt>Security mode</dt>
+            <dd>{{ detail.local.security_mode || '—' }}</dd>
+          </div>
+          <div>
+            <dt>Onboarding</dt>
+            <dd>{{ detail.local.onboarding_status?.replaceAll('_', ' ') || '—' }}</dd>
+          </div>
+          <div>
+            <dt>Connection history</dt>
+            <dd>
+              {{
+                detail.local.connection_status === 'unknown'
+                  ? 'Reachability unknown'
+                  : detail.local.connection_status?.replaceAll('_', ' ') || 'Not refreshed'
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>Created (UTC)</dt>
+            <dd>
+              {{
+                detail.local.created_at ? (detail.local.created_at | date: 'medium' : 'UTC') : '—'
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>First registered (UTC)</dt>
+            <dd>
+              {{
+                detail.local.first_registered_at
+                  ? (detail.local.first_registered_at | date: 'medium' : 'UTC')
+                  : '—'
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>Last registered (UTC)</dt>
+            <dd>
+              {{
+                detail.local.last_registered_at
+                  ? (detail.local.last_registered_at | date: 'medium' : 'UTC')
+                  : '—'
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>Last seen (UTC)</dt>
+            <dd>
+              {{
+                detail.local.last_seen_at
+                  ? (detail.local.last_seen_at | date: 'medium' : 'UTC')
+                  : '—'
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>Last Coiote metadata refresh (UTC)</dt>
+            <dd>
+              {{
+                detail.local.refreshed_at
+                  ? (detail.local.refreshed_at | date: 'medium' : 'UTC')
+                  : '—'
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>Connector type</dt>
+            <dd>{{ detail.coiote_snapshot?.connector_type || '—' }}</dd>
+          </div>
+          <div>
+            <dt>Domain</dt>
+            <dd>{{ detail.coiote_snapshot?.domain || '—' }}</dd>
+          </div>
+        </dl>
+      }
+    </section>
+  } @else {
+    <section id="settings">
+      <h2>Settings &amp; configuration</h2>
+      @let selection = settingSelection();
+      <div class="settings-workspace">
+        <section aria-labelledby="configuration-groups-heading">
+          <h3 id="configuration-groups-heading">Object</h3>
+          <table class="configuration-table" aria-labelledby="configuration-groups-heading">
+            <tbody>
+              <tr [class.selected]="serverSectionOpen() && configurationGroup() === 'server'">
+                <td>
+                  <button
+                    class="server-group-toggle"
+                    type="button"
+                    [attr.aria-expanded]="serverSectionOpen() && configurationGroup() === 'server'"
+                    aria-controls="lwm2m-server-content"
+                    (click)="selectConfigurationGroup('server')"
+                  >
+                    <app-icon name="database" />
+                    <span id="lwm2m-server-heading">LwM2M server</span>
+                    <app-icon name="chevron-right" />
+                  </button>
+                </td>
+              </tr>
+              <tr [class.selected]="serverSectionOpen() && configurationGroup() === 'device'">
+                <td>
+                  <button
+                    class="server-group-toggle"
+                    type="button"
+                    [attr.aria-expanded]="serverSectionOpen() && configurationGroup() === 'device'"
+                    aria-controls="lwm2m-server-content"
+                    (click)="selectConfigurationGroup('device')"
+                  >
+                    <app-icon name="cpu" />
+                    <span id="device-settings-heading">Device</span>
+                    <app-icon name="chevron-right" />
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <div
+          id="lwm2m-server-content"
+          class="configuration-panes"
+          role="region"
+          [attr.aria-labelledby]="
+            configurationGroup() === 'server' ? 'lwm2m-server-heading' : 'device-settings-heading'
+          "
+          [hidden]="!serverSectionOpen()"
+        >
+          <section aria-labelledby="configuration-resources-heading">
+            <h3 id="configuration-resources-heading">Resource</h3>
+            @if (configurationGroup() === 'device' && deviceSettingsLoading()) {
+              <p class="operation-state" role="status">Loading Device resources…</p>
+            }
+            @if (configurationGroup() === 'device' && deviceSettingsError()) {
+              <p class="operation-error" role="alert">{{ deviceSettingsError() }}</p>
+              <button class="button secondary" type="button" (click)="loadDeviceSettings()">
+                Retry
+              </button>
+            }
+            <table
+              class="configuration-table settings-table"
+              aria-labelledby="configuration-resources-heading"
+            >
+              <thead>
+                <tr>
+                  <th scope="col">Name</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of settingRows(); track row.resource_id) {
+                  <tr
+                    [class.selected]="selection.resourceId === row.resource_id"
+                    [attr.data-setting-row]="row.resource_id"
+                  >
+                    <th scope="row">{{ row.label }}</th>
+                    <td>
+                      <div class="setting-row-actions">
+                        <button
+                          type="button"
+                          class="icon-button setting-view"
+                          [attr.aria-label]="'View details for ' + row.label"
+                          [attr.aria-pressed]="
+                            selection.resourceId === row.resource_id && selection.mode === 'details'
+                          "
+                          aria-controls="configuration-detail"
+                          title="View details"
+                          (click)="selectSetting(row.resource_id, 'details')"
+                        >
+                          <app-icon name="eye" />
+                        </button>
+                        @if (row.readable && !row.writable) {
+                          <span
+                            class="setting-read-only"
+                            role="img"
+                            title="This resource is read-only."
+                            aria-label="This resource is read-only."
+                          >
+                            <app-icon name="lock" />
+                          </span>
+                        } @else if (configurationGroup() === 'server') {
+                          <button
+                            type="button"
+                            class="icon-button setting-edit"
+                            [attr.aria-label]="'Edit ' + row.label"
+                            [attr.aria-pressed]="
+                              selection.resourceId === row.resource_id && selection.mode === 'edit'
+                            "
+                            aria-controls="configuration-detail"
+                            [title]="row.writable ? 'Edit setting' : 'Not writable on this device'"
+                            [disabled]="!row.writable"
+                            (click)="selectSetting(row.resource_id, 'edit')"
+                          >
+                            <app-icon name="pencil" />
+                          </button>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </section>
+          <section aria-labelledby="configuration-detail-heading">
+            <h3 id="configuration-detail-heading">Details</h3>
+            <div id="configuration-detail" class="configuration-detail">
+              <ng-template
+                #settingInfo
+                let-resourceId
+                let-label="label"
+                let-deviceHelp="deviceHelp"
+              >
+                @if (
+                  deviceHelp ? [deviceHelp.summary, deviceHelp.details] : settingHelp[resourceId];
+                  as paragraphs
+                ) {
+                  @let expanded = openSettingInfo() === resourceId;
+                  @let panelId = (deviceHelp ? 'device' : 'server') + '-setting-info-' + resourceId;
+                  <button
+                    #infoToggle
+                    class="icon-button setting-info-toggle"
+                    type="button"
+                    [attr.aria-label]="'About ' + label"
+                    [title]="'About ' + label"
+                    [attr.aria-controls]="panelId"
+                    [attr.aria-expanded]="expanded"
+                    (click)="openSettingInfo.set(expanded ? null : resourceId)"
+                    (keydown.escape)="openSettingInfo.set(null)"
+                  >
+                    <app-icon name="circle-help" />
+                  </button>
+                  <div
+                    [id]="panelId"
+                    class="setting-info-panel"
+                    [hidden]="!expanded"
+                    (keydown.escape)="openSettingInfo.set(null); infoToggle.focus()"
+                  >
+                    @for (paragraph of paragraphs; track $index) {
+                      <p>{{ paragraph }}</p>
+                    }
+                    <a
+                      [href]="
+                        deviceHelp
+                          ? 'https://github.com/OpenMobileAlliance/lwm2m-registry/blob/prod/3.xml'
+                          : resourceId === 1
+                            ? 'https://docs.avsystem.com/hubfs/Anjay_Docs/BasicClient/BC-MandatoryObjects.html#server-object'
+                            : 'https://github.com/OpenMobileAlliance/lwm2m-registry/blob/prod/1.xml'
+                      "
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {{
+                        deviceHelp
+                          ? 'OMA LwM2M Device Object reference'
+                          : resourceId === 1
+                            ? 'AVSystem documentation'
+                            : 'OMA LwM2M Server Object reference'
+                      }}
+                      <app-icon name="external-link" />
+                    </a>
+                  </div>
+                }
+              </ng-template>
+              @if (configurationGroup() === 'server' && selection.resourceId === 1) {
+                <div class="settings-card lifetime-card">
+                  <div class="configuration-heading">
+                    <h4 class="configuration-title">
+                      <app-icon name="clock" /> Registration lifetime
+                    </h4>
+                    <ng-container
+                      *ngTemplateOutlet="
+                        settingInfo;
+                        context: { $implicit: 1, label: 'registration lifetime' }
+                      "
+                    />
+                  </div>
+                  <p class="metadata-note" id="lifetime-value-note">
+                    Controls how long, in seconds, the device's registration stays valid with the
+                    LwM2M server without a registration update.
+                  </p>
+                  <div class="current-setting lifetime-current">
+                    <span>Latest confirmed lifetime</span>
+                    <strong>
+                      {{
+                        lifetimeResult()?.lifetime !== null &&
+                        lifetimeResult()?.lifetime !== undefined
+                          ? lifetimeResult()?.lifetime + ' seconds'
+                          : lifetimeProcessing()
+                            ? 'Loading…'
+                            : 'Unavailable'
+                      }}
+                    </strong>
+                    @if (lifetimeResult(); as result) {
+                      <span class="reading-time"
+                        >{{ result.observed_at | date: 'medium' : 'UTC' }} UTC</span
+                      >
+                    }
+                    <div class="resource-actions">
+                      <button
+                        class="button secondary"
+                        type="button"
+                        (click)="readLifetime()"
+                        [disabled]="lifetimeProcessing()"
+                      >
+                        <app-icon name="refresh-cw" /> Show current lifetime
+                      </button>
+                    </div>
+                  </div>
+                  @if (selection.mode === 'edit') {
+                    <div class="configuration-editor">
+                      <label class="field" for="lifetime-seconds">
+                        Lifetime (seconds)
+                        <input
+                          id="lifetime-seconds"
+                          type="number"
+                          min="1"
+                          max="4294967295"
+                          step="1"
+                          placeholder="e.g. 60"
+                          [formControl]="lifetimeDraft"
+                          [attr.aria-describedby]="
+                            lifetimeDraft.invalid && lifetimeDraft.touched
+                              ? 'lifetime-value-note lifetime-validation'
+                              : 'lifetime-value-note'
+                          "
+                        />
+                      </label>
+                      <button
+                        class="button primary"
+                        type="button"
+                        [disabled]="
+                          lifetimeProcessing() ||
+                          lifetimeDraft.invalid ||
+                          lifetimeWriteUnconfirmed()
+                        "
+                        (click)="writeLifetime()"
+                      >
+                        <app-icon name="check" /> Apply to device
+                      </button>
+                      <button
+                        class="button quiet"
+                        type="button"
+                        [disabled]="lifetimeDraft.value === null"
+                        (click)="lifetimeDraft.reset()"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                    @if (lifetimeDraft.invalid && lifetimeDraft.touched) {
+                      <p id="lifetime-validation" class="operation-error" role="alert">
+                        Enter a whole number from 1 to 4294967295 seconds.
+                      </p>
+                    }
+                  }
+                  @if (lifetimeProcessing()) {
+                    <p class="operation-state" role="status">
+                      Reading or applying registration lifetime…
+                    </p>
+                  }
+                  @if (lifetimeStatus()) {
+                    <p class="operation-state" role="status">{{ lifetimeStatus() }}</p>
+                  }
+                  @if (lifetimeError()) {
+                    <p class="operation-error" role="alert">{{ lifetimeError() }}</p>
+                  }
+                </div>
+              }
+              @if (serverSettingsProcessing()) {
+                <p class="operation-state" role="status">Loading or checking server settings…</p>
+              }
+              @if (serverOperation(); as operation) {
+                <div class="server-operation">
+                  <p class="operation-state" role="status">
+                    {{ operation.resource }}:
+                    @switch (operation.state) {
+                      @case ('succeeded') {
+                        {{
+                          operation.kind === 'reboot'
+                            ? 'Reboot command acknowledged. This does not confirm the device is back online.'
+                            : operation.kind === 'write'
+                              ? 'Applied and verified on the device'
+                              : 'Device read completed'
+                        }}
+                      }
+                      @case ('pending') {
+                        @if (operation.kind === 'reboot') {
+                          Waiting for the device to acknowledge the reboot command.
+                        } @else {
+                          Waiting for device completion and fresh read-back.
+                        }
+                        Sleeping devices can take several minutes. Other configuration operations
+                        stay blocked until this finishes.
+                      }
+                      @case ('submission_unknown') {
+                        Submission unconfirmed — do not retry
+                      }
+                      @case ('verification_failed') {
+                        Device read-back does not match the requested value
+                      }
+                      @case ('failed') {
+                        Operation failed — no verified change confirmed
+                      }
+                    }
+                    @if (operation.kind === 'write') {
+                      Requested value: {{ operation.requested_value }}.
+                    }
+                    @if (operation.observed_at) {
+                      Read-back: {{ operation.value }} at
+                      {{ operation.observed_at | date: 'medium' : 'UTC' }} UTC.
+                    }
+                    @if (operation.state === 'pending') {
+                      {{
+                        serverAutoChecking()
+                          ? 'Checking the result automatically (up to 30 checks).'
+                          : 'Automatic checks paused. Use Check result to continue.'
+                      }}
+                    }
+                  </p>
+                  @if (operation.state === 'pending') {
+                    <button
+                      class="button secondary"
+                      type="button"
+                      [disabled]="serverSettingsProcessing()"
+                      (click)="checkServerSetting()"
+                    >
+                      Check result
+                    </button>
+                  }
+                </div>
+              }
+              @if (serverSettingsError()) {
+                <p class="operation-error" role="alert">{{ serverSettingsError() }}</p>
+              }
+              @if (configurationGroup() === 'device') {
+                @if (selectedDeviceSetting(); as setting) {
+                  <div class="settings-card">
+                    <div class="configuration-heading">
+                      <h4 class="configuration-title">{{ setting.label }}</h4>
+                      @if (deviceSettingHelp[setting.resource_id]; as help) {
+                        <ng-container
+                          *ngTemplateOutlet="
+                            settingInfo;
+                            context: {
+                              $implicit: setting.resource_id,
+                              label: setting.label,
+                              deviceHelp: help,
+                            }
+                          "
+                        />
+                      }
+                    </div>
+                    @if (deviceSettingHelp[setting.resource_id]; as help) {
+                      <p class="metadata-note">{{ help.summary }}</p>
+                    }
+                    @if (setting.resource_id === 4) {
+                      @if (rebootConfirmation()) {
+                        <p role="status">Reboot {{ endpoint() }} now?</p>
+                        <div class="resource-actions">
+                          <button
+                            class="button primary"
+                            type="button"
+                            [disabled]="serverSettingsBusy() || lifetimeProcessing()"
+                            (click)="submitDeviceSetting(setting)"
+                          >
+                            Confirm reboot
+                          </button>
+                          <button
+                            class="button quiet"
+                            type="button"
+                            (click)="rebootConfirmation.set(false)"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      } @else {
+                        <button
+                          class="button secondary"
+                          type="button"
+                          [disabled]="
+                            !setting.executable || serverSettingsBusy() || lifetimeProcessing()
+                          "
+                          (click)="rebootConfirmation.set(true)"
+                        >
+                          Reboot device
+                        </button>
+                      }
+                      @if (!setting.executable) {
+                        <p class="metadata-note">Reboot is not exposed by this device.</p>
+                      }
+                    } @else {
+                      @if (setting.observations.length) {
+                        <table
+                          class="configuration-table"
+                          [attr.aria-label]="setting.label + ' observations'"
+                        >
+                          <thead>
+                            <tr>
+                              @if (setting.resource_id === 6) {
+                                <th scope="col">Instance</th>
+                              }
+                              <th scope="col">Value</th>
+                              <th scope="col">Observed (UTC)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            @for (observation of setting.observations; track observation.name) {
+                              <tr>
+                                @if (setting.resource_id === 6) {
+                                  <td>{{ observation.name.split('.').at(-1) }}</td>
+                                }
+                                <td>{{ observation.value }}</td>
+                                <td>{{ observation.updateTime | date: 'medium' : 'UTC' }}</td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      } @else {
+                        <p class="metadata-note">
+                          {{
+                            setting.readable
+                              ? 'No confirmed value yet.'
+                              : 'This resource is not readable on this device.'
+                          }}
+                        </p>
+                      }
+                      <button
+                        class="button secondary"
+                        type="button"
+                        [disabled]="
+                          !setting.readable ||
+                          serverSettingsBusy() ||
+                          lifetimeProcessing() ||
+                          deviceSettingsLoading()
+                        "
+                        (click)="submitDeviceSetting(setting)"
+                      >
+                        Read from device
+                      </button>
+                    }
+                  </div>
+                }
+              }
+              @for (
+                setting of configurationGroup() === 'server' ? selectedServerSettings() : [];
+                track setting.resource_id
+              ) {
+                <div
+                  class="settings-card server-setting-card"
+                  [attr.data-resource-id]="setting.resource_id"
+                >
+                  <div class="configuration-heading">
+                    <h4 class="configuration-title">{{ setting.label }}</h4>
+                    <ng-container
+                      *ngTemplateOutlet="
+                        settingInfo;
+                        context: { $implicit: setting.resource_id, label: setting.label }
+                      "
+                    />
+                  </div>
+                  @if (setting.warning) {
+                    <p class="metadata-note">{{ setting.warning }}</p>
+                  }
+                  <div class="current-setting">
+                    <span>Last observed value</span>
+                    <strong>
+                      {{ setting.value === null ? 'Not read' : setting.value }}
+                      {{ setting.value !== null ? setting.unit : '' }}
+                    </strong>
+                    @if (setting.observed_at) {
+                      <span class="reading-time"
+                        >{{ setting.observed_at | date: 'medium' : 'UTC' }} UTC</span
+                      >
+                    }
+                    <button
+                      class="button secondary"
+                      type="button"
+                      [disabled]="serverSettingsBusy() || !setting.readable"
+                      (click)="submitServerSetting(setting, 'read')"
+                    >
+                      Read from device
+                    </button>
+                  </div>
+                  @if (selection.mode === 'edit' && setting.writable) {
+                    <div class="configuration-editor">
+                      <label class="field" [for]="'server-setting-' + setting.resource_id">
+                        {{ setting.label }}{{ setting.unit ? ' (' + setting.unit + ')' : '' }}
+                        @if (setting.data_type === 'boolean') {
+                          <select
+                            [id]="'server-setting-' + setting.resource_id"
+                            [formControl]="serverDraft(setting)"
+                          >
+                            <option [ngValue]="null">Select a value</option>
+                            <option [ngValue]="true">True</option>
+                            <option [ngValue]="false">False</option>
+                          </select>
+                        } @else if (setting.data_type === 'integer') {
+                          <input
+                            [id]="'server-setting-' + setting.resource_id"
+                            type="number"
+                            [min]="setting.minimum"
+                            [max]="setting.maximum"
+                            step="1"
+                            [formControl]="serverDraft(setting)"
+                          />
+                        } @else {
+                          <input
+                            [id]="'server-setting-' + setting.resource_id"
+                            type="text"
+                            maxlength="4"
+                            placeholder="e.g. U"
+                            [formControl]="serverDraft(setting)"
+                          />
+                        }
+                      </label>
+                      <button
+                        class="button primary"
+                        type="button"
+                        [disabled]="serverSettingsBusy() || !validServerDraft(setting)"
+                        (click)="submitServerSetting(setting, 'write')"
+                      >
+                        <app-icon name="check" /> Apply to device
+                      </button>
+                      <button
+                        class="button quiet"
+                        type="button"
+                        [disabled]="
+                          serverSettingsProcessing() || serverDraft(setting).value === null
+                        "
+                        (click)="serverDraft(setting).reset()"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                    @if (
+                      serverDraft(setting).touched &&
+                      serverDraft(setting).value !== null &&
+                      !validServerDraft(setting)
+                    ) {
+                      <p class="operation-error" role="alert">
+                        @if (setting.data_type === 'integer') {
+                          Enter a whole number from {{ setting.minimum }} to {{ setting.maximum }}.
+                        } @else if (!setting.writable) {
+                          Enter a valid device-supported binding, such as U.
+                        }
+                      </p>
+                    }
+                  } @else {
+                    <p class="metadata-note">
+                      This setting is not exposed as readable and writable by this device.
+                    </p>
+                  }
+                </div>
+              }
+            </div>
+          </section>
         </div>
-        <p class="metadata-note" id="lifetime-value-note">
-          Show current lifetime displays the latest confirmed value and when it was observed. The
-          backend reads the device only when it has no stored confirmed value.
+      </div>
+      <div class="settings-card timezone-card">
+        <h3 class="configuration-title">Timezone</h3>
+        <p class="metadata-note">
+          Changes apply to the client's LwM2M setting, not your computer's OS timezone.
         </p>
-        <div class="current-setting lifetime-current">
-          <span>Latest confirmed lifetime</span>
-          <strong>
-            {{
-              lifetimeResult()?.lifetime !== null && lifetimeResult()?.lifetime !== undefined
-                ? lifetimeResult()?.lifetime + ' seconds'
-                : 'Not read'
-            }}
-          </strong>
-          @if (lifetimeResult(); as result) {
-            <span class="reading-time">{{ result.observed_at | date: 'medium' : 'UTC' }} UTC</span>
+        <div class="current-setting">
+          <span>Last verified timezone</span>
+          <strong>{{ readings()[timezoneKey]?.value ?? 'Not read' }}</strong>
+          @if (readings()[timezoneKey]; as reading) {
+            <span class="reading-time">{{ reading.completed_at | date: 'medium' : 'UTC' }} UTC</span>
           }
           <div class="resource-actions">
             <button
               class="button secondary"
               type="button"
-              (click)="readLifetime()"
-              [disabled]="lifetimeProcessing()"
+              (click)="readResource(timezoneKey)"
+              [disabled]="busy(timezoneKey) || !supports(timezoneKey, 'Read')"
             >
-              <app-icon name="refresh-cw" /> Show current lifetime
+              Read timezone
             </button>
+            @if (operationIds()[timezoneKey] && unresolved(timezoneKey)) {
+              <button
+                class="button quiet"
+                type="button"
+                (click)="checkResult(timezoneKey)"
+                [disabled]="processing()[timezoneKey]"
+              >
+                Check result
+              </button>
+            }
           </div>
         </div>
-        <div class="configuration-editor">
-          <label class="field" for="lifetime-seconds">
-            Lifetime (seconds)
+        <form [formGroup]="timezoneForm" (ngSubmit)="writeTimezone()">
+          <label class="field">
+            Timezone
             <input
-              id="lifetime-seconds"
-              type="number"
-              min="1"
-              max="4294967295"
-              step="1"
-              placeholder="e.g. 60"
-              [formControl]="lifetimeDraft"
-              [attr.aria-describedby]="
-                lifetimeDraft.invalid && lifetimeDraft.touched
-                  ? 'lifetime-value-note lifetime-validation'
-                  : 'lifetime-value-note'
-              "
+              formControlName="timezone"
+              placeholder="e.g. Etc/UTC"
+              maxlength="31"
+              [readOnly]="busy(timezoneKey) || !readings()[timezoneKey] || !supports(timezoneKey, 'Write')"
             />
           </label>
           <button
             class="button primary"
-            type="button"
-            [disabled]="lifetimeProcessing() || lifetimeDraft.invalid || lifetimeWriteUnconfirmed()"
-            (click)="writeLifetime()"
+            type="submit"
+            [disabled]="
+              busy(timezoneKey) ||
+              !readings()[timezoneKey] ||
+              !supports(timezoneKey, 'Write') ||
+              timezoneForm.invalid ||
+              timezoneForm.controls.timezone.value.trim() === readings()[timezoneKey]?.value
+            "
           >
             <app-icon name="check" /> Apply to device
           </button>
-          <button
-            class="button quiet"
-            type="button"
-            [disabled]="lifetimeDraft.value === null"
-            (click)="lifetimeDraft.reset()"
-          >
-            Discard
-          </button>
-        </div>
-        @if (lifetimeDraft.invalid && lifetimeDraft.touched) {
-          <p id="lifetime-validation" class="operation-error" role="alert">
-            Enter a whole number from 1 to 4294967295 seconds.
-          </p>
+        </form>
+        @if (operations()[timezoneKey] || unconfirmed()[timezoneKey] || processing()[timezoneKey]) {
+          <p class="operation-state" role="status">{{ operationLabel(timezoneKey) }}</p>
         }
-        @if (lifetimeProcessing()) {
-          <p class="operation-state" role="status">Reading or applying registration lifetime…</p>
+        @if (operations()[timezoneKey]?.error; as error) {
+          <p class="operation-error" role="alert">{{ error }}</p>
         }
-        @if (lifetimeStatus()) {
-          <p class="operation-state" role="status">{{ lifetimeStatus() }}</p>
+        @if (errors()[timezoneKey]; as error) {
+          <p class="operation-error" role="alert">{{ error }}</p>
         }
-        @if (lifetimeError()) {
-          <p class="operation-error" role="alert">{{ lifetimeError() }}</p>
+        @if (resourceError()) {
+          <p class="operation-error" role="alert">{{ resourceError() }}</p>
+        } @else if (!resourceLoading() && !supports(timezoneKey, 'Write')) {
+          <p class="metadata-note">Timezone is not exposed as writable by this device.</p>
         }
       </div>
-      <p class="metadata-note">
-        Current values are the connector's stored device observations, not a live check. Read from
-        device requests a fresh value. Apply submits one setting for backend verification.
-      </p>
-      @if (serverSettingsProcessing()) {
-        <p class="operation-state" role="status">Loading or checking server settings…</p>
-      }
-      @if (serverOperation(); as operation) {
-        <div class="server-operation">
-          <p class="operation-state" role="status">
-            {{ operation.resource }}:
-            @switch (operation.state) {
-              @case ('succeeded') {
-                {{
-                  operation.kind === 'write'
-                    ? 'Applied and verified on the device'
-                    : 'Device read completed'
-                }}
-              }
-              @case ('pending') {
-                Waiting for device completion and fresh read-back. Sleeping devices can take several
-                minutes. Other server setting operations stay blocked until this finishes.
-              }
-              @case ('submission_unknown') {
-                Submission unconfirmed — do not retry
-              }
-              @case ('verification_failed') {
-                Device read-back does not match the requested value
-              }
-              @case ('failed') {
-                Operation failed — no verified change confirmed
-              }
-            }
-            @if (operation.kind === 'write') {
-              Requested value: {{ operation.requested_value }}.
-            }
-            @if (operation.observed_at) {
-              Read-back: {{ operation.value }} at
-              {{ operation.observed_at | date: 'medium' : 'UTC' }} UTC.
-            }
-            @if (operation.state === 'pending') {
-              {{
-                serverAutoChecking()
-                  ? 'Checking the result automatically (up to 30 checks).'
-                  : 'Automatic checks paused. Use Check result to continue.'
-              }}
-            }
-          </p>
-          @if (operation.state === 'pending') {
-            <button
-              class="button secondary"
-              type="button"
-              [disabled]="serverSettingsProcessing()"
-              (click)="checkServerSetting()"
-            >
-              Check result
-            </button>
-          }
-        </div>
-      }
-      @if (serverSettingsError()) {
-        <p class="operation-error" role="alert">{{ serverSettingsError() }}</p>
-      }
-      @for (setting of serverSettings(); track setting.resource_id) {
-        <div
-          class="settings-card server-setting-card"
-          [attr.data-resource-id]="setting.resource_id"
-        >
-          <h4 class="configuration-title">{{ setting.label }}</h4>
-          @if (setting.warning) {
-            <p class="metadata-note">{{ setting.warning }}</p>
-          }
-          <div class="current-setting">
-            <span>Last observed value</span>
-            <strong>
-              {{ setting.value === null ? 'Not read' : setting.value }}
-              {{ setting.value !== null ? setting.unit : '' }}
-            </strong>
-            @if (setting.observed_at) {
-              <span class="reading-time"
-                >{{ setting.observed_at | date: 'medium' : 'UTC' }} UTC</span
-              >
-            }
-            <button
-              class="button secondary"
-              type="button"
-              [disabled]="serverSettingsBusy() || !setting.readable"
-              (click)="submitServerSetting(setting, 'read')"
-            >
-              Read from device
-            </button>
-          </div>
-          @if (setting.writable) {
-            <div class="configuration-editor">
-              <label class="field" [for]="'server-setting-' + setting.resource_id">
-                {{ setting.label }}{{ setting.unit ? ' (' + setting.unit + ')' : '' }}
-                @if (setting.data_type === 'boolean') {
-                  <select
-                    [id]="'server-setting-' + setting.resource_id"
-                    [formControl]="serverDraft(setting)"
-                  >
-                    <option [ngValue]="null">Select a value</option>
-                    <option [ngValue]="true">True</option>
-                    <option [ngValue]="false">False</option>
-                  </select>
-                } @else if (setting.data_type === 'integer') {
-                  <input
-                    [id]="'server-setting-' + setting.resource_id"
-                    type="number"
-                    [min]="setting.minimum"
-                    [max]="setting.maximum"
-                    step="1"
-                    [formControl]="serverDraft(setting)"
-                  />
-                } @else {
-                  <input
-                    [id]="'server-setting-' + setting.resource_id"
-                    type="text"
-                    maxlength="4"
-                    placeholder="e.g. U"
-                    [formControl]="serverDraft(setting)"
-                  />
-                }
-              </label>
-              <button
-                class="button primary"
-                type="button"
-                [disabled]="serverSettingsBusy() || !validServerDraft(setting)"
-                (click)="submitServerSetting(setting, 'write')"
-              >
-                <app-icon name="check" /> Apply to device
-              </button>
-              <button
-                class="button quiet"
-                type="button"
-                [disabled]="serverSettingsProcessing() || serverDraft(setting).value === null"
-                (click)="serverDraft(setting).reset()"
-              >
-                Discard
-              </button>
-            </div>
-            @if (
-              serverDraft(setting).touched &&
-              serverDraft(setting).value !== null &&
-              !validServerDraft(setting)
-            ) {
-              <p class="operation-error" role="alert">
-                @if (setting.data_type === 'integer') {
-                  Enter a whole number from {{ setting.minimum }} to {{ setting.maximum }}.
-                } @else {
-                  Enter a valid device-supported binding, such as U.
-                }
-              </p>
-            }
-          } @else {
-            <p class="metadata-note">
-              This setting is not exposed as readable and writable by this device.
-            </p>
-          }
-        </div>
-      }
-    </div>
-    <div class="settings-card timezone-card">
-      <h3 class="configuration-title">Timezone</h3>
-      <p class="metadata-note">
-        Changes apply to the client's LwM2M setting, not your computer's OS timezone.
-      </p>
-      <div class="current-setting">
-        <span>Last verified timezone</span>
-        <strong>{{ readings()[timezoneKey]?.value ?? 'Not read' }}</strong>
-        @if (readings()[timezoneKey]; as reading) {
-          <span class="reading-time">{{ reading.completed_at | date: 'medium' : 'UTC' }} UTC</span>
-        }
-        <div class="resource-actions">
-          <button
-            class="button secondary"
-            (click)="readResource(timezoneKey)"
-            [disabled]="busy(timezoneKey) || !supports(timezoneKey, 'Read')"
-          >
-            Read timezone
-          </button>
-          @if (operationIds()[timezoneKey] && unresolved(timezoneKey)) {
-            <button
-              class="button quiet"
-              (click)="checkResult(timezoneKey)"
-              [disabled]="processing()[timezoneKey]"
-            >
-              Check result
-            </button>
-          }
-        </div>
-      </div>
-      <form [formGroup]="timezoneForm" (ngSubmit)="writeTimezone()">
-        <label class="field">
-          Timezone
-          <input
-            formControlName="timezone"
-            placeholder="e.g. Etc/UTC"
-            maxlength="31"
-            [readOnly]="
-              busy(timezoneKey) || !readings()[timezoneKey] || !supports(timezoneKey, 'Write')
-            "
-          />
-        </label>
-        <button
-          class="button primary"
-          type="submit"
-          [disabled]="
-            busy(timezoneKey) ||
-            !readings()[timezoneKey] ||
-            !supports(timezoneKey, 'Write') ||
-            timezoneForm.invalid ||
-            timezoneForm.controls.timezone.value.trim() === readings()[timezoneKey]?.value
-          "
-        >
-          <app-icon name="check" /> Apply to device
-        </button>
-      </form>
-      @if (operations()[timezoneKey] || unconfirmed()[timezoneKey] || processing()[timezoneKey]) {
-        <p class="operation-state" role="status">{{ operationLabel(timezoneKey) }}</p>
-      }
-      @if (operations()[timezoneKey]?.error; as error) {
-        <p class="operation-error" role="alert">{{ error }}</p>
-      }
-      @if (errors()[timezoneKey]; as error) {
-        <p class="operation-error" role="alert">{{ error }}</p>
-      }
-      @if (!resourceLoading() && !resourceError() && !supports(timezoneKey, 'Write')) {
-        <p class="metadata-note">Timezone is not exposed as writable by this device.</p>
-      }
-    </div>
-  </section>
+    </section>
+  }
 </section>

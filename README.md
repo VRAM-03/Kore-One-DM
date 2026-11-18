@@ -115,9 +115,10 @@ Angular. The API-documentation link targets the default backend address.
   Endpoint and friendly name are shared fields. Deselecting the connector clears
   secrets and resets security mode to PSK. Create supports PSK or no-security
   test mode.
-- Click an endpoint to open `/devices/{endpoint}` with Overview and
-  Settings & configuration sections. Overview shows stored administrative details, registration
-  timestamps and a filtered stored Coiote snapshot, not live resource values.
+- Click an endpoint to open `/devices/{endpoint}`. Overview shows stored
+  administrative details, registration timestamps and a filtered Coiote snapshot.
+  Settings & configuration opens a separate view for LwM2M server and Device
+  resources, with Timezone below the settings workspace.
 - Read timezone explicitly, then use Check result to retrieve the operation outcome. Resource discovery
   checks Coiote's stored model capabilities; it is not itself a live Read.
 - Read the device timezone before editing it. Apply to device submits a
@@ -133,6 +134,12 @@ Angular. The API-documentation link targets the default backend address.
   Settings are available according to discovered device capabilities; changes to
   communication settings can interrupt connectivity. Successful writes require a
   matching fresh read-back, not just task acceptance.
+- The Device section shows supported observations and can request fresh readings.
+  Reboot requires confirmation and device support; command success does not
+  confirm the device is back online. Test it only on a safe device.
+- **Coiote connector → Configure** saves salted PBKDF2-SHA256 hashes in local
+  SQLite through a same-origin loopback request. This prototype does not verify
+  a Coiote login or change the credentials used by the active connector.
 - Rename the friendly name only.
 - Delete with an exact endpoint-name confirmation. This can delete the remote
   Coiote record too; it does not stop the running device client.
@@ -144,6 +151,8 @@ Angular. The API-documentation link targets the default backend address.
 | Frontend request                 | Existing backend route       |
 | -------------------------------- | ---------------------------- |
 | `GET /api/health`                | `GET /health`                |
+| `GET /api/device-activity`       | `GET /device-activity`       |
+| `PUT /api/connectors/coiote/configuration` | `PUT /connectors/coiote/configuration` |
 | `GET /api/devices`               | `GET /devices`               |
 | `POST /api/devices`              | `POST /devices`              |
 | `GET /api/devices/{endpoint}`    | `GET /devices/{endpoint}`    |
@@ -159,6 +168,9 @@ Angular. The API-documentation link targets the default backend address.
 | `POST /api/devices/{endpoint}/server-settings/{resourceId}/read` | `POST /devices/{endpoint}/server-settings/{resourceId}/read` |
 | `PATCH /api/devices/{endpoint}/server-settings/{resourceId}` | `PATCH /devices/{endpoint}/server-settings/{resourceId}` |
 | `GET /api/devices/{endpoint}/server-settings/operations/{id}` | `GET /devices/{endpoint}/server-settings/operations/{id}` |
+| `GET /api/devices/{endpoint}/device-settings` | `GET /devices/{endpoint}/device-settings` |
+| `POST /api/devices/{endpoint}/device-settings/{resourceId}/read` | `POST /devices/{endpoint}/device-settings/{resourceId}/read` |
+| `POST /api/devices/{endpoint}/device-settings/reboot` | `POST /devices/{endpoint}/device-settings/reboot` |
 
 ## Important behavior
 
