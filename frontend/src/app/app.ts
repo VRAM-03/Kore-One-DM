@@ -1,4 +1,4 @@
-import { CommonModule, Location } from '@angular/common';
+import { CommonModule, DOCUMENT, Location } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import {
   Component,
@@ -14,6 +14,8 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { catchError, exhaustMap, filter, map, of, timer } from 'rxjs';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import Keycloak from 'keycloak-js';
+import { SIGNED_OUT_PATH } from './auth';
 import { CreateDevice, Device, DeviceActivity, DeviceApi, errorMessage } from './device-api';
 import { Icon } from './icon';
 
@@ -29,6 +31,12 @@ export class App {
   private readonly api = inject(DeviceApi);
   private readonly router = inject(Router);
   private readonly location = inject(Location);
+  private readonly document = inject(DOCUMENT);
+  private readonly keycloak = inject(Keycloak);
+  readonly signedIn = this.keycloak.authenticated === true;
+  readonly email = [this.keycloak.idTokenParsed?.['email'], this.keycloak.tokenParsed?.['email']]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  readonly loggingOut = signal(false);
   readonly devicePage = toSignal(
     this.router.events.pipe(
       filter((event) => event instanceof NavigationEnd),
@@ -112,6 +120,7 @@ export class App {
   );
   constructor() {
     effect(() => {
+      if (!this.signedIn) return;
       const onDevicePage = this.devicePage();
       untracked(() => {
         if (onDevicePage) void this.checkHealth();
@@ -119,7 +128,7 @@ export class App {
       });
     });
     effect((onCleanup) => {
-      if (this.view() !== 'dashboard' || this.devicePage()) return;
+      if (!this.signedIn || this.view() !== 'dashboard' || this.devicePage()) return;
       this.activity.set(null);
       this.activityError.set(false);
       const subscription = timer(0, 30000)
@@ -130,6 +139,19 @@ export class App {
         });
       onCleanup(() => subscription.unsubscribe());
     });
+  }
+
+  async logout(): Promise<void> {
+    if (this.loggingOut()) return;
+    this.loggingOut.set(true);
+    try {
+      const redirectUri = new URL(`/${SIGNED_OUT_PATH}`, this.document.baseURI).href;
+      await this.keycloak.logout({ redirectUri });
+    } catch {
+      this.notify('Could not sign out. Please try again.', true);
+    } finally {
+      this.loggingOut.set(false);
+    }
   }
 
   async checkHealth(): Promise<void> {

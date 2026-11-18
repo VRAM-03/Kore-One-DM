@@ -89,10 +89,11 @@ describe('Device communication page', () => {
       .click();
   }
 
-  function setup() {
+  function setup(view = 'settings') {
     const params = new BehaviorSubject(convertToParamMap({ endpoint: 'lab' }));
     const api = {
       detail: vi.fn().mockResolvedValue(detail),
+      lastSeen: vi.fn().mockResolvedValue({ last_seen_at: '2026-11-18T12:00:00Z' }),
       readLifetime: vi.fn().mockResolvedValue(lifetimeRead),
       deviceSettings: vi.fn().mockResolvedValue([
         {
@@ -160,7 +161,7 @@ describe('Device communication page', () => {
           provide: ActivatedRoute,
           useValue: {
             paramMap: params,
-            queryParamMap: new BehaviorSubject(convertToParamMap({ view: 'settings' })),
+            queryParamMap: new BehaviorSubject(convertToParamMap({ view })),
           },
         },
         { provide: DeviceApi, useValue: api },
@@ -176,6 +177,37 @@ describe('Device communication page', () => {
       element: fixture.nativeElement as HTMLElement,
     };
   }
+
+  it('shows connector contact data and reports a failed refresh without hiding the overview', async () => {
+    const { fixture, page, api, element } = setup('overview');
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(element.querySelector('.overview-grid .last-seen dd')?.textContent).toContain(
+        'Nov 18, 2026',
+      );
+    });
+    expect(api.lastSeen).toHaveBeenCalledExactlyOnceWith('lab');
+
+    const reload = Array.from(element.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Reload details'),
+    )!;
+    api.lastSeen.mockResolvedValueOnce({ last_seen_at: '2026-11-18T12:05:00Z' });
+    reload.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(element.querySelector('.last-seen dd')?.textContent).toMatch(/12:05:00\s+PM/);
+    });
+    expect(api.lastSeen.mock.calls).toEqual([['lab'], ['lab']]);
+
+    api.lastSeen.mockRejectedValueOnce(new Error('Connector unavailable'));
+    page.reloadDevicePage();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(element.querySelector('.last-seen [role="status"]')?.textContent).toContain('Unavailable');
+    });
+    expect(element.querySelector('h1')?.textContent).toContain('Lab sensor');
+    expect(element.querySelector('.last-seen')?.textContent).not.toContain('Nov 18, 2026');
+  });
 
   it('automatically shows all nine server settings and the latest confirmed lifetime without submitting a write', async () => {
     const { fixture, api, element } = setup();

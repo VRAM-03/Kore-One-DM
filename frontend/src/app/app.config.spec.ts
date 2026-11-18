@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import { TestBed } from '@angular/core/testing';
 import Keycloak from 'keycloak-js';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,7 +10,27 @@ describe('Keycloak initialization', () => {
     TestBed.configureTestingModule({ providers: [{ provide: Keycloak, useValue: { init } }] });
 
     await expect(TestBed.runInInjectionContext(initializeKeycloak)).resolves.toBeUndefined();
-    expect(init).toHaveBeenCalledWith({ onLoad: 'login-required', pkceMethod: 'S256' });
+    expect(init).toHaveBeenCalledWith({
+      onLoad: 'login-required',
+      pkceMethod: 'S256',
+      scope: 'email',
+    });
+  });
+
+  it('allows the logout return page without immediately requesting login again', async () => {
+    const init = vi.fn().mockResolvedValue(false);
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: Keycloak, useValue: { init } },
+        { provide: DOCUMENT, useValue: { location: { pathname: '/signed-out' } } },
+      ],
+    });
+    await expect(TestBed.runInInjectionContext(initializeKeycloak)).resolves.toBeUndefined();
+    expect(init).toHaveBeenCalledExactlyOnceWith({
+      checkLoginIframe: false,
+      pkceMethod: 'S256',
+      scope: 'email',
+    });
   });
 
   it('prevents startup when authentication fails or initialization errors', async () => {

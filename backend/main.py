@@ -168,6 +168,10 @@ class DeviceActivityResponse(BaseModel):
     checked_at: datetime
 
 
+class DeviceLastSeenResponse(BaseModel):
+    last_seen_at: datetime | None
+
+
 class CoioteResourceMetadata(BaseModel):
     model_config = ConfigDict(strict=True)
 
@@ -407,6 +411,34 @@ def get_device(endpoint_name: str, response: Response, db: Session = Depends(get
             "security_mode": device.security_mode,
         },
     }
+
+
+@app.get(
+    "/devices/{endpoint_name}/last-seen", response_model=DeviceLastSeenResponse,
+    summary="Get the connector's last recorded contact for one device",
+)
+def get_device_last_seen(
+    endpoint_name: str, response: Response, db: Session = Depends(get_db)
+) -> DeviceLastSeenResponse:
+    response.headers["Cache-Control"] = "no-store"
+    device = db.query(Device).filter(Device.endpoint_name == endpoint_name).first()
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    remote_id = device.coiote_device_id
+    if not remote_id:
+        raise HTTPException(status_code=409, detail="Device has no connector device ID")
+
+    try:
+        record = CoioteRecord.model_validate(get_coiote_device_details(remote_id))
+        if record.id != remote_id or record.properties.endpoint_name != endpoint_name:
+            raise ValueError("Device identifier mismatch")
+        if record.last_seen_at is not None and record.last_seen_at > datetime.now(timezone.utc):
+            raise ValueError("Contact time is in the future")
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        raise coiote_request_error(error) from None
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=502, detail="Coiote returned invalid contact data") from None
+    return DeviceLastSeenResponse(last_seen_at=record.last_seen_at)
 
 
 @app.get(

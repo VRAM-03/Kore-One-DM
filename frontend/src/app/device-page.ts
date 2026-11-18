@@ -8,6 +8,7 @@ import { map } from 'rxjs';
 import {
   DeviceApi,
   DeviceDetails,
+  DeviceLastSeen,
   DeviceSetting,
   RegistrationLifetimeResult,
   ServerSetting,
@@ -113,6 +114,9 @@ export class DevicePage {
   );
   readonly endpoint = signal('');
   readonly details = signal<DeviceDetails | null>(null);
+  readonly lastSeen = signal<DeviceLastSeen | null>(null);
+  readonly lastSeenLoading = signal(false);
+  readonly lastSeenError = signal('');
   readonly loading = signal(false);
   readonly pageError = signal('');
   readonly lifetimeDraft = new FormControl<number | null>(null, {
@@ -177,6 +181,9 @@ export class DevicePage {
       this.stopServerChecks();
       this.endpoint.set(params.get('endpoint') ?? '');
       this.details.set(null);
+      this.lastSeen.set(null);
+      this.lastSeenLoading.set(false);
+      this.lastSeenError.set('');
       this.loading.set(false);
       this.lifetimeDraft.reset();
       this.lifetimeResult.set(null);
@@ -263,7 +270,10 @@ export class DevicePage {
     this.pageError.set('');
     try {
       const detail = await this.api.detail(this.endpoint());
-      if (generation === this.generation) this.details.set(detail);
+      if (generation === this.generation) {
+        this.details.set(detail);
+        if (detail.local.coiote_device_id) void this.loadLastSeen();
+      }
     } catch (error) {
       if (generation === this.generation) {
         this.details.set(null);
@@ -271,6 +281,24 @@ export class DevicePage {
       }
     } finally {
       if (generation === this.generation) this.loading.set(false);
+    }
+  }
+
+  private async loadLastSeen(): Promise<void> {
+    if (this.lastSeenLoading()) return;
+    const generation = this.generation;
+    this.lastSeen.set(null);
+    this.lastSeenError.set('');
+    this.lastSeenLoading.set(true);
+    try {
+      const result = await this.api.lastSeen(this.endpoint());
+      if (generation === this.generation) this.lastSeen.set(result);
+    } catch {
+      if (generation === this.generation) {
+        this.lastSeenError.set('Unavailable. Use Reload details to try again.');
+      }
+    } finally {
+      if (generation === this.generation) this.lastSeenLoading.set(false);
     }
   }
 

@@ -2,7 +2,8 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 import { Router, provideRouter } from '@angular/router';
-import { Subject, of, throwError } from 'rxjs';
+import Keycloak from 'keycloak-js';
+import { of, throwError } from 'rxjs';
 import { App } from './app';
 import { Device, DeviceApi, DeviceDetails, RegistrationLifetimeResult } from './device-api';
 import { DevicePage } from './device-page';
@@ -24,13 +25,19 @@ const device: Device = {
 const detail: DeviceDetails = { local: device, coiote_snapshot: null };
 
 describe('Device workspace', () => {
-  function setup() {
+  function setup(authenticated = true, email: string | undefined = 'operator@example.test') {
+    const keycloak = {
+      authenticated,
+      idTokenParsed: { email },
+      logout: vi.fn().mockResolvedValue(undefined),
+    };
     const api = {
       list: vi.fn().mockResolvedValue([device]),
       health: vi.fn().mockResolvedValue({ status: 'ok' }),
       activity: vi.fn().mockReturnValue(
         of({ recently_active: 1, unknown: 0, checked_at: '2026-11-16T00:00:00Z' }),
       ),
+      lastSeen: vi.fn().mockResolvedValue({ last_seen_at: '2026-11-17T00:00:00Z' }),
       saveCoioteConfiguration: vi.fn().mockResolvedValue(undefined),
       detail: vi.fn().mockResolvedValue(detail),
       create: vi.fn().mockResolvedValue({ ...device, id: 2, endpoint_name: 'new-device' }),
@@ -57,18 +64,20 @@ describe('Device workspace', () => {
           { path: '', children: [] },
         ]),
         { provide: DeviceApi, useValue: api },
+        { provide: Keycloak, useValue: keycloak },
       ],
     });
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     const element = fixture.nativeElement as HTMLElement;
-    const dialog = element.querySelector('dialog')!;
+    const dialog = element.querySelector('dialog');
+    if (!dialog) return { api, fixture, app: fixture.componentInstance, element, keycloak };
     dialog.showModal = () => dialog.setAttribute('open', '');
     dialog.close = () => {
       dialog.removeAttribute('open');
       dialog.dispatchEvent(new Event('close'));
     };
-    return { api, fixture, app: fixture.componentInstance, element };
+    return { api, fixture, app: fixture.componentInstance, element, keycloak };
   }
 
   it('shows a success banner after saving connector credentials and clears the dialog fields', async () => {
@@ -101,21 +110,22 @@ describe('Device workspace', () => {
     );
   });
 
-  it('shows stored contact history without pretending it proves current reachability', async () => {
+  it('shows stored onboarding time but no last seen information in the list', async () => {
     const { fixture, app, element } = setup();
     await fixture.whenStable();
     fixture.detectChanges();
     expect(element.textContent).toContain('lab-device');
     const cells = element.querySelectorAll('tbody tr:first-child td');
     expect(cells[3]?.textContent).toContain('Nov 15, 2026');
-    expect(cells[4]?.textContent).toContain('Nov 16, 2026');
+    expect(element.querySelector('thead')?.textContent).not.toContain('Last seen');
+    expect(cells[4]?.textContent).not.toContain('Nov 16, 2026');
     expect(element.textContent).not.toContain('Reachability unknown');
     expect(app.health()).toBe('available');
     expect(element.querySelector('header .backend-state')).toBeNull();
     expect(element.textContent).not.toContain('Online devices');
   });
 
-  it('refreshes estimated activity only on the dashboard and reports failures', async () => {
+  it('refreshes Recently active only while the dashboard is open', async () => {
     const { fixture, app, api, element } = setup();
     await fixture.whenStable();
     vi.useFakeTimers();
@@ -125,7 +135,6 @@ describe('Device workspace', () => {
       fixture.detectChanges();
       await vi.advanceTimersByTimeAsync(0);
       fixture.detectChanges();
-
       const cards = element.querySelectorAll('.stat-card');
       expect(cards).toHaveLength(2);
       expect(cards[0].textContent).toContain('Devices');
@@ -133,53 +142,39 @@ describe('Device workspace', () => {
       expect(cards[1].textContent).toContain('Recently active');
       expect(cards[1].querySelector('strong')?.textContent).toBe('1');
       expect(element.querySelector('.stat-note')?.textContent).toContain('not live connectivity');
-      expect(element.textContent).not.toContain('Never connected');
-      expect(element.textContent).not.toContain('Not in connector');
-
       api.activity.mockReturnValue(throwError(() => new Error('unavailable')));
       await vi.advanceTimersByTimeAsync(30000);
       fixture.detectChanges();
-      expect(api.activity).toHaveBeenCalledTimes(2);
-      expect(cards[1].querySelector('strong')?.textContent).toBe('—');
       expect(element.textContent).toContain('Activity check unavailable');
-      expect(api.list).toHaveBeenCalledTimes(1);
-
-      api.activity.mockReturnValue(
-        of({ recently_active: 0, unknown: 1, checked_at: '2026-11-16T00:01:00Z' }),
-      );
-      await vi.advanceTimersByTimeAsync(30000);
-      fixture.detectChanges();
-      expect(cards[1].querySelector('strong')?.textContent).toBe('0');
-      expect(element.textContent).toContain('1 device(s) have no contact data');
-
       app.navigate('devices');
       fixture.detectChanges();
       await vi.advanceTimersByTimeAsync(30000);
-      expect(api.activity).toHaveBeenCalledTimes(3);
+      expect(api.activity).toHaveBeenCalledTimes(2);
+      expect(api.lastSeen).not.toHaveBeenCalled();
+      expect(api.list).toHaveBeenCalledTimes(1);
     } finally {
       fixture.destroy();
       vi.useRealTimers();
     }
   });
 
-  it('does not overlap activity checks and cancels them when leaving the dashboard', async () => {
-    const { fixture, app, api } = setup();
+  it('shows the signed-in email and logs out through Keycloak', async () => {
+    const { fixture, element, keycloak } = setup();
     await fixture.whenStable();
-    vi.useFakeTimers();
-    try {
-      const request = new Subject<{ recently_active: number; unknown: number; checked_at: string }>();
-      api.activity.mockReturnValue(request);
-      app.navigate('dashboard');
-      fixture.detectChanges();
-      await vi.advanceTimersByTimeAsync(60000);
-      expect(api.activity).toHaveBeenCalledTimes(1);
-      app.navigate('devices');
-      fixture.detectChanges();
-      expect(request.observed).toBe(false);
-    } finally {
-      fixture.destroy();
-      vi.useRealTimers();
-    }
+    expect(element.querySelector('.session-email')?.textContent).toContain('operator@example.test');
+    element.querySelector<HTMLButtonElement>('.session-account button')!.click();
+    expect(keycloak.logout).toHaveBeenCalledExactlyOnceWith({
+      redirectUri: new URL('/signed-out', document.baseURI).href,
+    });
+  });
+
+  it('shows a sign-in link without loading inventory when signed out', async () => {
+    const { fixture, element, api } = setup(false);
+    await fixture.whenStable();
+    expect(element.querySelector('a')?.getAttribute('href')).toBe('/');
+    expect(element.textContent).toContain('You are not signed in');
+    expect(api.list).not.toHaveBeenCalled();
+    expect(api.health).not.toHaveBeenCalled();
   });
 
   it('presents connector-neutral inventory and a conceptual super-admin workspace', async () => {
@@ -210,7 +205,7 @@ describe('Device workspace', () => {
     expect(inventory.textContent).not.toContain('Record created');
     expect(inventory.textContent).not.toContain('Connection history');
     expect(inventory.textContent).toContain('Onboarding time (UTC)');
-    expect(inventory.textContent).toContain('No contact recorded');
+    expect(inventory.textContent).not.toContain('No contact recorded');
     expect(inventory.querySelector('tbody')?.textContent).toContain(device.endpoint_name);
     const sort = inventory.querySelector<HTMLButtonElement>('.sort-button')!;
     expect(sort.getAttribute('aria-label')).toBe('Show oldest devices first');
@@ -224,7 +219,7 @@ describe('Device workspace', () => {
     expect(role.textContent?.trim()).toBe('Super Admin');
     expect(role.previousElementSibling?.classList.contains('account-title')).toBe(true);
     expect(role.getAttribute('title')).toContain(
-      'authentication and permissions are not implemented',
+      'does not reflect account permissions',
     );
   });
 
@@ -560,20 +555,12 @@ describe('Device workspace', () => {
     expect(api.list).toHaveBeenCalledTimes(2);
   });
 
-  it('reloads stored inventory from the toolbar without a separate sync request', async () => {
+  it('loads inventory automatically without exposing a reload button', async () => {
     const { fixture, api, element } = setup();
     await fixture.whenStable();
     fixture.detectChanges();
     expect(element.querySelectorAll('.heading-actions button')).toHaveLength(1);
-    expect(element.querySelector('.inventory-toolbar button')?.textContent).toContain(
-      'Reload list',
-    );
-    const updated = { ...device, friendly_name: 'Refreshed name' };
-    api.list.mockResolvedValue([updated]);
-    element.querySelector<HTMLButtonElement>('.inventory-toolbar button')!.click();
-    await fixture.whenStable();
-    fixture.detectChanges();
-    expect(api.list).toHaveBeenCalledTimes(2);
-    expect(element.querySelector('tbody')?.textContent).toContain('Refreshed name');
+    expect(element.querySelector('.inventory-toolbar button')).toBeNull();
+    expect(api.list).toHaveBeenCalledTimes(1);
   });
 });

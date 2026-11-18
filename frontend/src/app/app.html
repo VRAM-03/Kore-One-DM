@@ -1,3 +1,10 @@
+@if (!signedIn) {
+  <main class="signed-out">
+    <h1>KORE One DM</h1>
+    <p>You are not signed in.</p>
+    <a class="button primary" href="/">Sign in</a>
+  </main>
+} @else {
 <div class="shell" [class.sidebar-collapsed]="sidebarCollapsed()">
   <aside id="device-sidebar" class="sidebar" [class.is-open]="mobileMenu()">
     <a
@@ -81,10 +88,18 @@
           <div class="account-title">Kore One DM Prototype</div>
           <span
             class="role-banner"
-            title="Prototype role label only; authentication and permissions are not implemented"
+            title="Prototype role label only; does not reflect account permissions"
             >Super Admin</span
           >
         </div>
+      </div>
+      <div class="session-account">
+        <span class="role-banner session-email">
+          Signed in: {{ email ?? 'Email unavailable' }}
+        </span>
+        <button class="button quiet" type="button" (click)="logout()" [disabled]="loggingOut()">
+          {{ loggingOut() ? 'Signing out…' : 'Log out' }}
+        </button>
       </div>
     </header>
 
@@ -180,7 +195,7 @@
                 <article class="stat-card">
                   <span class="stat-icon"><app-icon name="radio" /></span>
                   <div>
-                    <span>Recently active</span
+                    <span>Recently active</span>
                     ><strong>{{ activity()?.recently_active ?? '—' }}</strong>
                   </div>
                 </article>
@@ -221,15 +236,6 @@
                     [value]="query()"
                     (input)="search(searchInput.value)"
                 /></label>
-                <button
-                  class="button quiet"
-                  (click)="loadDevices()"
-                  [disabled]="busy()"
-                  title="Reload stored inventory; does not refresh connector data"
-                >
-                  <app-icon name="refresh-cw" [class.spin]="loading()" />
-                  {{ loading() ? 'Loading…' : 'Reload list' }}
-                </button>
               </div>
               @if (loadError()) {
                 <div class="empty-state error-state" role="alert">
@@ -283,9 +289,6 @@
                         <th title="First successful device registration recorded by the connector">
                           Onboarding time (UTC)
                         </th>
-                        <th title="Last recorded device contact, not a live online/offline check">
-                          Status <span class="column-note">Last seen (UTC)</span>
-                        </th>
                         <th class="actions-column">Actions</th>
                       </tr>
                     </thead>
@@ -314,13 +317,6 @@
                               device.first_registered_at
                                 ? (device.first_registered_at | date: 'MMM d, y, HH:mm' : 'UTC')
                                 : '—'
-                            }}
-                          </td>
-                          <td class="timestamp">
-                            {{
-                              device.last_seen_at
-                                ? (device.last_seen_at | date: 'MMM d, y, HH:mm' : 'UTC')
-                                : 'No contact recorded'
                             }}
                           </td>
                           <td>
@@ -546,7 +542,7 @@
           }
           @if (createBlocked()) {
             <p class="form-error">
-              A record may exist. Reload the list and verify it in Coiote before retrying.
+              A record may exist. Verify it in Coiote before retrying.
               Credentials cleared.
             </p>
           }
@@ -630,3 +626,4 @@
     }
   }
 </dialog>
+}

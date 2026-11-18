@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import {
   ApplicationConfig,
   inject,
@@ -8,14 +9,17 @@ import { provideHttpClient } from '@angular/common/http';
 import { provideRouter, withInMemoryScrolling } from '@angular/router';
 import { provideKeycloak } from 'keycloak-angular';
 import Keycloak from 'keycloak-js';
+import { SIGNED_OUT_PATH } from './auth';
 import { DevicePage } from './device-page';
 
 export async function initializeKeycloak(): Promise<void> {
+  const signedOut = inject(DOCUMENT).location?.pathname === `/${SIGNED_OUT_PATH}`;
   const authenticated = await inject(Keycloak).init({
-    onLoad: 'login-required',
+    ...(signedOut ? { checkLoginIframe: false } : { onLoad: 'login-required' }),
     pkceMethod: 'S256',
+    scope: 'email',
   });
-  if (!authenticated) {
+  if (!authenticated && !signedOut) {
     throw new Error('Keycloak authentication is required to start the application.');
   }
 }
@@ -35,6 +39,7 @@ export const appConfig: ApplicationConfig = {
     provideRouter(
       [
         { path: 'devices/:endpoint', component: DevicePage },
+        { path: SIGNED_OUT_PATH, children: [] },
         { path: '', children: [] },
         { path: '**', redirectTo: '' },
       ],

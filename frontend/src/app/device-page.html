@@ -8,11 +8,11 @@
     <button
       class="button quiet"
       (click)="reloadDevicePage()"
-      [disabled]="loading()"
+      [disabled]="loading() || lastSeenLoading()"
       [title]="
         showingSettings()
-          ? 'Reload stored details and the latest confirmed lifetime'
-          : 'Reload stored details; does not refresh Coiote'
+          ? 'Reload details, last seen, and the latest confirmed lifetime'
+          : 'Reload details and last seen for this device'
       "
     >
       <app-icon name="refresh-cw" /> Reload details
@@ -98,16 +98,6 @@
             </dd>
           </div>
           <div>
-            <dt>Last seen (UTC)</dt>
-            <dd>
-              {{
-                detail.local.last_seen_at
-                  ? (detail.local.last_seen_at | date: 'medium' : 'UTC')
-                  : '—'
-              }}
-            </dd>
-          </div>
-          <div>
             <dt>Last Coiote metadata refresh (UTC)</dt>
             <dd>
               {{
@@ -124,6 +114,26 @@
           <div>
             <dt>Domain</dt>
             <dd>{{ detail.coiote_snapshot?.domain || '—' }}</dd>
+          </div>
+          <div class="last-seen">
+            <dt title="Latest contact reported by the connector, not a live connectivity check">
+              Last seen (UTC)
+            </dt>
+            <dd>
+              @if (!detail.local.coiote_device_id) {
+                Not linked to a connector
+              } @else if (lastSeenLoading()) {
+                <span role="status">Checking…</span>
+              } @else if (lastSeenError()) {
+                <span role="status">{{ lastSeenError() }}</span>
+              } @else if (lastSeen(); as contact) {
+                {{
+                  contact.last_seen_at
+                    ? (contact.last_seen_at | date: 'medium' : 'UTC')
+                    : 'No contact recorded'
+                }}
+              }
+            </dd>
           </div>
         </dl>
       }

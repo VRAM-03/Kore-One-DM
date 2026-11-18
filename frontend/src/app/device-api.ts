@@ -30,6 +30,10 @@ export interface DeviceDetails {
   } | null;
 }
 
+export interface DeviceLastSeen {
+  last_seen_at: string | null;
+}
+
 export interface DeviceActivity {
   recently_active: number;
   unknown: number;
@@ -121,6 +125,12 @@ export class DeviceApi {
 
   detail(endpoint: string): Promise<DeviceDetails> {
     return firstValueFrom(this.http.get<DeviceDetails>(this.deviceUrl(endpoint)));
+  }
+
+  lastSeen(endpoint: string): Promise<DeviceLastSeen> {
+    return firstValueFrom(
+      this.http.get<DeviceLastSeen>(`${this.deviceUrl(endpoint)}/last-seen`).pipe(timeout(20000)),
+    );
   }
 
   create(body: CreateDevice): Promise<Device> {

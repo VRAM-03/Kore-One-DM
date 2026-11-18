@@ -77,6 +77,9 @@ rather than `127.0.0.1` for the frontend; they are different origins. If sign-in
 or initialization fails, startup stops and the browser console reports the
 error. This development SSO configuration requires access to the existing server;
 no local Keycloak server or client secret is needed.
+For logout, allow `http://localhost:4200/signed-out` under the client's
+**Valid post logout redirect URIs**. The account banner shows the email claim
+when Keycloak includes it; it does not display a username as an email.
 
 The development proxy forwards `/api/*` to `http://127.0.0.1:8000`, removing
 the `/api` prefix. Restart the backend after updating so the current API routes
@@ -87,13 +90,13 @@ Angular. The API-documentation link targets the default backend address.
 ## Scope
 
 - Shared inventory uses connector-neutral terminology. Device name displays the
-  existing `endpoint_name`; API fields and links are unchanged. The old onboarding
-  state badge is removed: Onboarding time (UTC) shows `first_registered_at`, and
-  Status shows `last_seen_at`, explicitly labelled Last seen (UTC). Missing
-  registration is shown as a dash; missing contact as No contact recorded.
-  These are stored timestamps, not verified live online/offline states.
-  Provider names/settings remain in connector-specific areas.
-- The header shows a Super Admin banner below Kore One DM Prototype for the concept demo.
+  existing `endpoint_name` and Onboarding time (UTC) shows the stored
+  `first_registered_at`. The list does not show Last seen or poll the connector.
+  The device overview shows Last seen (UTC) in its details grid and fetches it
+  for the selected device only.
+  It shows the connector's last recorded contact, not live online/offline status.
+- The header shows the signed-in email and a Log out button. It also shows a
+  Super Admin banner for the concept demo.
   The label is not derived from Keycloak and does not grant or enforce roles.
   Keycloak login gates frontend startup, but the backend does not validate tokens
   or enforce authorization; it remains accessible directly.
@@ -102,11 +105,9 @@ Angular. The API-documentation link targets the default backend address.
   navigation drawer; collapse state lasts only for the current page session.
 - Expanded sidebar branding is a compact O icon with One, aligned top-left
   and vertically centered. The collapsed rail keeps the O icon alone.
-- Dashboard shows Devices and Recently active counts. The latter is an estimate
-  based on connector contact within 120 seconds, refreshed every 30 seconds while
-  the dashboard is open. It is not a live connectivity check; missing contact
-  data is reported separately and failed checks show unavailable. The read-only
-  activity check queries existing local devices and does not sync inventory.
+- Dashboard shows Devices and Recently active. The activity estimate checks
+  linked devices for contact in the last 120 seconds every 30 seconds while
+  the dashboard is open. It does not sync inventory or verify live connectivity.
 - Search by device/friendly name, creation-time sorting and pagination are
   client-side. Devices default to newest-created-first; the Created time (UTC)
   arrow switches to oldest-first. Equal timestamps use ID ordering; missing
@@ -139,9 +140,10 @@ Angular. The API-documentation link targets the default backend address.
 - Rename the friendly name only.
 - Delete with an exact endpoint-name confirmation. This can delete the remote
   Coiote record too; it does not stop the running device client.
-- Reload list/details from the platform database through existing device GETs.
-  These requests make no Coiote calls. No separate sync UI action.
-- No group operations in the frontend, arbitrary device writes, logout control,
+- Inventory loads automatically from the platform database, without a Reload
+  list button. Reload details also refreshes Last seen for the selected device.
+  No separate sync UI action.
+- No group operations in the frontend, arbitrary device writes,
   CMP functionality, or direct access to Coiote credentials.
 
 | Frontend request                 | Existing backend route       |
@@ -152,6 +154,7 @@ Angular. The API-documentation link targets the default backend address.
 | `GET /api/devices`               | `GET /devices`               |
 | `POST /api/devices`              | `POST /devices`              |
 | `GET /api/devices/{endpoint}`    | `GET /devices/{endpoint}`    |
+| `GET /api/devices/{endpoint}/last-seen` | `GET /devices/{endpoint}/last-seen` |
 | `PATCH /api/devices/{endpoint}`  | `PATCH /devices/{endpoint}`  |
 | `DELETE /api/devices/{endpoint}` | `DELETE /devices/{endpoint}` |
 | `POST /api/devices/{endpoint}/lifetime/read` | `POST /devices/{endpoint}/lifetime/read` |

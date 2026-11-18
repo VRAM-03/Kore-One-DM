@@ -13,12 +13,12 @@ AVSystem Coiote is the first device-management connector. Explain steps for a Py
   submission. Retains Timezone, registration-lifetime verification, Recently
   active and the existing Keycloak client. The connector configuration form
   stores salted hashes locally and does not change the active account.
-- Dashboard direction (November 18): show Devices and Recently active. At the
-  user's request, the latter estimates contact within 120 seconds, refreshing
-  every 30 seconds while the dashboard is open. A read-only activity endpoint
-  checks existing local device IDs without device commands or inventory sync;
-  missing contact data and connector failures are explicit. This is not a
-  verified live connectivity count and quiet/sleeping devices may be excluded.
+- Latest dashboard and SSO direction (November 18): keep Devices and Recently
+  active, with the original dashboard-only 30-second activity polling. The
+  inventory omits the Last seen column and Reload list. Device overview fetches
+  Last seen for one device only, with no inventory sync or database updates.
+  The shared header displays the signed-in email and Keycloak logout, with a
+  `/signed-out` return page.
 - Merge of `origin/asunny-01` into `crud-sso`: retained the `backend/` package,
   single root README and Keycloak setup while integrating the incoming lifetime,
   LwM2M server-settings, device-time and feature-flagged firmware APIs and their

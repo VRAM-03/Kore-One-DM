@@ -1,7 +1,6 @@
 import { HttpErrorResponse, provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { firstValueFrom } from 'rxjs';
 import {
   DeviceApi,
   errorMessage,
@@ -60,16 +59,12 @@ describe('Existing NEXYN API integration', () => {
     expect(errorMessage(error)).not.toContain('SECRET');
   });
 
-  it('fetches the activity estimate without triggering inventory sync', async () => {
-    const activity = firstValueFrom(api.activity());
-    const request = http.expectOne('/api/device-activity');
+  it('fetches last seen for the selected device only', async () => {
+    const contact = api.lastSeen('sensor ?#');
+    const request = http.expectOne('/api/devices/sensor%20%3F%23/last-seen');
     expect(request.request.method).toBe('GET');
-    request.flush({ recently_active: 1, unknown: 2, checked_at: '2026-11-18T00:00:00Z' });
-    expect(await activity).toEqual({
-      recently_active: 1,
-      unknown: 2,
-      checked_at: '2026-11-18T00:00:00Z',
-    });
+    request.flush({ last_seen_at: '2026-11-18T00:00:00Z' });
+    expect(await contact).toEqual({ last_seen_at: '2026-11-18T00:00:00Z' });
   });
 
   it('maps registration-lifetime reads and verified writes to their existing routes', async () => {

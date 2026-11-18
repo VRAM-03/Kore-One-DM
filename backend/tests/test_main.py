@@ -808,6 +808,33 @@ class DeviceRefreshTests(DeviceAPITestCase):
             db.commit()
             return device.id
 
+    def test_last_seen_fetches_only_the_selected_device_without_changing_inventory(self):
+        self.seed()
+        self.seed(endpoint_name="other", coiote_device_id="other-id")
+        with patch("backend.main.get_coiote_device_details", return_value=self.record) as details:
+            response = self.client.get("/devices/test-endpoint/last-seen")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"last_seen_at": "2026-11-09T10:02:00Z"})
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        details.assert_called_once_with("remote-id")
+        self.list_devices.assert_not_called()
+        with self.session_factory() as db:
+            self.assertIsNone(db.query(Device).filter_by(endpoint_name="test-endpoint").one().last_seen_at)
+
+    def test_last_seen_distinguishes_no_contact_and_invalid_contact_data(self):
+        self.seed()
+        self.seed(endpoint_name="unlinked", coiote_device_id=None)
+        with patch("backend.main.get_coiote_device_details") as details:
+            self.assertEqual(self.client.get("/devices/missing/last-seen").status_code, 404)
+            self.assertEqual(self.client.get("/devices/unlinked/last-seen").status_code, 409)
+            details.assert_not_called()
+            details.return_value = {**self.record, "lastContactTime": None}
+            response = self.client.get("/devices/test-endpoint/last-seen")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"last_seen_at": None})
+            details.return_value = {**self.record, "lastContactTime": "invalid"}
+            self.assertEqual(self.client.get("/devices/test-endpoint/last-seen").status_code, 502)
+
     def test_activity_checks_local_devices_without_changing_inventory(self):
         self.seed()
         self.seed(endpoint_name="unknown", coiote_device_id=None)
