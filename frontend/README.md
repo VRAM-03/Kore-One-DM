@@ -210,7 +210,15 @@ Angular. The API-documentation link targets the default backend address.
   existing backend request. Browser developer tools can inspect requests; do not
   share request captures containing secrets.
 
-**Local PoC only:** the backend has no API access control and stores PSKs in
+- In **Coiote connector**, **Configure** saves salted PBKDF2-SHA256 hashes of the
+  entered username/email and password in SQLite via
+  `PUT /api/connectors/coiote/configuration`. Saving replaces the previous hash
+  pair and shows a **Configuration Successful** banner after the backend
+  confirms the save. The endpoint accepts only same-origin loopback requests; the hashes are
+  not returned to the browser. This does not read existing credentials, verify
+  a Coiote login, or switch the active account.
+
+**Local PoC only:** the backend has no general API access control and stores PSKs in
 plaintext SQLite. Use test credentials. Do not expose the dev server/backend to
 the internet or deploy it to a shared environment without authentication, TLS,
 authorization, and secure secret storage.

@@ -17,7 +17,7 @@ import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { CreateDevice, Device, DeviceApi, errorMessage } from './device-api';
 import { Icon } from './icon';
 
-type DialogMode = 'create' | 'rename' | 'delete';
+type DialogMode = 'create' | 'rename' | 'delete' | 'configure';
 
 @Component({
   imports: [CommonModule, ReactiveFormsModule, RouterOutlet, Icon],
@@ -56,6 +56,16 @@ export class App {
   readonly modalError = signal('');
   readonly saving = signal(false);
   readonly createBlocked = signal(false);
+  readonly connectorForm = new FormGroup({
+    username: new FormControl('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(254), Validators.pattern(/\S/)],
+    }),
+    password: new FormControl('', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.maxLength(1024)],
+    }),
+  });
   readonly form = new FormGroup({
     connector: new FormControl<'' | 'coiote'>('', {
       nonNullable: true,
@@ -175,6 +185,33 @@ export class App {
     this.openDialog('create');
   }
 
+  openConnectorConfiguration(): void {
+    this.connectorForm.reset();
+    this.openDialog('configure');
+  }
+
+  async saveConnectorConfiguration(): Promise<void> {
+    if (this.saving() || this.connectorForm.invalid) return;
+    const { username, password } = this.connectorForm.getRawValue();
+    this.saving.set(true);
+    this.modalError.set('');
+    this.notice.set('');
+    this.connectorForm.reset();
+    try {
+      await this.api.saveCoioteConfiguration(username.trim(), password);
+      this.dialog?.nativeElement.close();
+      this.notify('Configuration Successful');
+    } catch (error) {
+      this.modalError.set(
+        error instanceof HttpErrorResponse && error.status === 403
+          ? 'Open the local console to save this configuration.'
+          : 'Could not confirm the save. Re-enter the credentials to try again.',
+      );
+    } finally {
+      this.saving.set(false);
+    }
+  }
+
   onConnectorChanged(): void {
     this.form.controls.identity.reset('');
     this.form.controls.key.reset('');
@@ -215,6 +252,7 @@ export class App {
   onDialogClosed(): void {
     this.form.controls.identity.reset('');
     this.form.controls.key.reset('');
+    this.connectorForm.reset();
     this.modalError.set('');
   }
 

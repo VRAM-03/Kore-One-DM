@@ -27,6 +27,7 @@ describe('Device workspace', () => {
     const api = {
       list: vi.fn().mockResolvedValue([device]),
       health: vi.fn().mockResolvedValue({ status: 'ok' }),
+      saveCoioteConfiguration: vi.fn().mockResolvedValue(undefined),
       detail: vi.fn().mockResolvedValue(detail),
       create: vi.fn().mockResolvedValue({ ...device, id: 2, endpoint_name: 'new-device' }),
       rename: vi.fn().mockResolvedValue({ ...device, friendly_name: 'Updated' }),
@@ -66,6 +67,36 @@ describe('Device workspace', () => {
     };
     return { api, fixture, app: fixture.componentInstance, element };
   }
+
+  it('shows a success banner after saving connector credentials and clears the dialog fields', async () => {
+    const { fixture, app, api, element } = setup();
+    await fixture.whenStable();
+    app.navigate('connector');
+    await fixture.whenStable();
+    const configure = Array.from(
+      element.querySelectorAll<HTMLButtonElement>('.connector-actions button'),
+    ).find((button) => button.textContent?.trim() === 'Configure')!;
+    configure.click();
+    await fixture.whenStable();
+    const dialog = element.querySelector('dialog')!;
+    const password = dialog.querySelector<HTMLInputElement>('[formControlName="password"]')!;
+    expect(dialog.open).toBe(true);
+    expect(password.type).toBe('password');
+    app.connectorForm.setValue({ username: ' test-account ', password: ' test-password ' });
+    dialog
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await fixture.whenStable();
+    expect(api.saveCoioteConfiguration).toHaveBeenCalledExactlyOnceWith(
+      'test-account',
+      ' test-password ',
+    );
+    expect(dialog.open).toBe(false);
+    expect(app.connectorForm.getRawValue()).toEqual({ username: '', password: '' });
+    expect(element.querySelector('.notification[role="status"]')?.textContent).toContain(
+      'Configuration Successful',
+    );
+  });
 
   it('shows stored contact history without pretending it proves current reachability', async () => {
     const { fixture, app, element } = setup();

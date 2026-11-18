@@ -150,6 +150,9 @@
                       : 'Platform API unavailable'
                 }}
               </span>
+              <button class="button secondary" type="button" (click)="openConnectorConfiguration()">
+                Configure
+              </button>
             </div>
           </section>
         } @else {
@@ -416,8 +419,8 @@
             ? 'Create device'
             : modalMode() === 'rename'
               ? 'Rename device'
-              : modalMode() === 'delete'
-                ? 'Delete device'
+              : modalMode() === 'configure'
+                ? 'Configure Coiote credentials'
                 : 'Delete device'
         }}
       </h2>
@@ -437,6 +440,42 @@
     </div>
   }
   @switch (modalMode()) {
+    @case ('configure') {
+      <p class="dialog-intro">Setup the Coiote credentials to configure your account.</p>
+      <form
+        [formGroup]="connectorForm"
+        (ngSubmit)="saveConnectorConfiguration()"
+        autocomplete="off"
+      >
+        <div class="form-body">
+          <label class="field">
+            Username or email
+            <input formControlName="username" maxlength="254" autocomplete="off" autofocus />
+          </label>
+          <label class="field">
+            Password
+            <input type="password" formControlName="password" maxlength="1024" autocomplete="off" />
+          </label>
+        </div>
+        <div class="dialog-footer">
+          <button
+            class="button secondary"
+            type="button"
+            [disabled]="saving()"
+            (click)="closeDialog()"
+          >
+            Cancel
+          </button>
+          <button
+            class="button primary"
+            type="submit"
+            [disabled]="saving() || connectorForm.invalid"
+          >
+            {{ saving() ? 'Saving…' : 'Save configuration' }}
+          </button>
+        </div>
+      </form>
+    }
     @case ('create') {
       @if (form.controls.connector.value === 'coiote') {
         <p class="dialog-intro">Creates a local and Coiote record.</p>

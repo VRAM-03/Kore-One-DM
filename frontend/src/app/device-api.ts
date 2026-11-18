@@ -258,6 +258,14 @@ export class DeviceApi {
     );
   }
 
+  saveCoioteConfiguration(username: string, password: string): Promise<void> {
+    return firstValueFrom(
+      this.http
+        .put<void>(`${this.base}/connectors/coiote/configuration`, { username, password })
+        .pipe(timeout(15000)),
+    );
+  }
+
   health(): Promise<{ status: string }> {
     return firstValueFrom(
       this.http.get<{ status: string }>(`${this.base}/health`).pipe(timeout(10000)),
