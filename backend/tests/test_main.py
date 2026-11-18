@@ -801,6 +801,47 @@ class DeviceRefreshTests(DeviceAPITestCase):
             db.commit()
             return device.id
 
+    def test_activity_checks_local_devices_without_changing_inventory(self):
+        self.seed()
+        self.seed(endpoint_name="unknown", coiote_device_id=None)
+        self.seed(endpoint_name="old", coiote_device_id="old-id")
+        self.seed(endpoint_name="no-contact", coiote_device_id="no-contact-id")
+        now = datetime(2026, 11, 9, 10, 4, tzinfo=timezone.utc)
+        records = {
+            "remote-id": self.record,
+            "old-id": {**self.record, "id": "old-id", "lastContactTime": "2026-11-09T10:01:59Z"},
+            "no-contact-id": {**self.record, "id": "no-contact-id", "lastContactTime": None},
+        }
+        with patch("backend.main.get_coiote_device_details", side_effect=records.get) as details:
+            with patch("backend.main.datetime", wraps=datetime) as clock:
+                clock.now.return_value = now
+                response = self.client.get("/device-activity")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.json(), {
+            "recently_active": 1, "unknown": 2, "checked_at": "2026-11-09T10:04:00Z"
+        })
+        self.assertEqual(details.call_count, 3)
+        self.list_devices.assert_not_called()
+        with self.session_factory() as db:
+            self.assertEqual(db.query(Device).count(), 4)
+            self.assertIsNone(db.query(Device).filter_by(endpoint_name="test-endpoint").one().last_seen_at)
+
+    def test_activity_errors_do_not_report_a_successful_count(self):
+        self.seed()
+        with patch("backend.main.get_coiote_device_details") as details:
+            details.side_effect = httpx.ConnectError("provider secret")
+            response = self.client.get("/device-activity")
+            self.assertEqual(response.status_code, 502)
+            self.assertNotIn("provider secret", response.text)
+            details.side_effect = None
+            details.return_value = {**self.record, "lastContactTime": "invalid"}
+            self.assertEqual(self.client.get("/device-activity").status_code, 502)
+            details.return_value = {**self.record, "id": "wrong-id"}
+            self.assertEqual(self.client.get("/device-activity").status_code, 502)
+            details.return_value = {**self.record, "lastContactTime": "2999-01-01T00:00:00Z"}
+            self.assertEqual(self.client.get("/device-activity").status_code, 502)
+
     def test_list_and_details_use_stored_records_without_provider_requests(self):
         stored_at = datetime(2026, 11, 9, 10, 2, tzinfo=timezone.utc)
         local_id = self.seed(

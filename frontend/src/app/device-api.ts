@@ -30,6 +30,12 @@ export interface DeviceDetails {
   } | null;
 }
 
+export interface DeviceActivity {
+  recently_active: number;
+  unknown: number;
+  checked_at: string;
+}
+
 export interface CreateDevice {
   endpoint_name: string;
   friendly_name?: string;
@@ -124,6 +130,10 @@ export class DeviceApi {
 
   list(): Promise<Device[]> {
     return firstValueFrom(this.http.get<Device[]>(`${this.base}/devices`));
+  }
+
+  activity() {
+    return this.http.get<DeviceActivity>(`${this.base}/device-activity`).pipe(timeout(20000));
   }
 
   detail(endpoint: string): Promise<DeviceDetails> {

@@ -8,7 +8,7 @@ from pydantic import (
     field_validator,
 )
 from typing import Literal, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import httpx
 import os
 import re
@@ -20,11 +20,12 @@ from .database import engine, Base, get_db, initialize_database
 from .device_lifetime import router as lifetime_router
 from .device_server_settings import router as server_settings_router
 from .device_time import router as time_router
-from .device_sync import coiote_request_error, refresh_devices
+from .device_sync import CoioteRecord, coiote_request_error, refresh_devices
 from .models import Device, DeviceOperation, Group
 from .coiote_client import (
     create_coiote_device,
     delete_coiote_device,
+    get_coiote_device_details,
     get_coiote_device_resources,
     get_coiote_task_report,
     submit_coiote_read,
@@ -159,6 +160,12 @@ class CoioteDeviceSnapshot(BaseModel):
 class DeviceDetailsResponse(BaseModel):
     local: DeviceResponse
     coiote_snapshot: Optional[CoioteDeviceSnapshot] = None
+
+
+class DeviceActivityResponse(BaseModel):
+    recently_active: int
+    unknown: int
+    checked_at: datetime
 
 
 class CoioteResourceMetadata(BaseModel):
@@ -342,6 +349,39 @@ def sync_devices(db: Session = Depends(get_db)):
         "updated": result.updated,
         "missing_from_coiote": result.missing_from_coiote,
     }
+
+@app.get(
+    "/device-activity", response_model=DeviceActivityResponse,
+    summary="Estimate recent device activity without changing inventory",
+)
+def device_activity(response: Response, db: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    devices = db.query(Device).all()
+    remote_ids = [device.coiote_device_id for device in devices if device.coiote_device_id]
+    if len(remote_ids) != len(set(remote_ids)):
+        raise HTTPException(status_code=409, detail="Local device identifiers conflict")
+
+    contacts = []
+    try:
+        for remote_id in remote_ids:
+            record = CoioteRecord.model_validate(get_coiote_device_details(remote_id))
+            if record.id != remote_id:
+                raise ValueError("Device identifier mismatch")
+            contacts.append(record.last_seen_at)
+    except (httpx.HTTPStatusError, httpx.RequestError) as error:
+        raise coiote_request_error(error) from None
+    except (ValidationError, ValueError, TypeError):
+        raise HTTPException(status_code=502, detail="Coiote returned invalid activity data") from None
+
+    checked_at = datetime.now(timezone.utc)
+    if any(contact is not None and contact > checked_at for contact in contacts):
+        raise HTTPException(status_code=502, detail="Coiote returned a future contact time")
+    cutoff = checked_at - timedelta(seconds=120)
+    return DeviceActivityResponse(
+        recently_active=sum(contact is not None and contact >= cutoff for contact in contacts),
+        unknown=len(devices) - len(remote_ids) + sum(contact is None for contact in contacts),
+        checked_at=checked_at,
+    )
 
 @app.get(
     "/devices/{endpoint_name}", response_model=DeviceDetailsResponse,

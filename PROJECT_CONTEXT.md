@@ -5,6 +5,12 @@ AVSystem Coiote is the first device-management connector. Explain steps for a Py
 
 ## Current project structure and operation (November 17)
 
+- Dashboard direction (November 18): show Devices and Recently active. At the
+  user's request, the latter estimates contact within 120 seconds, refreshing
+  every 30 seconds while the dashboard is open. A read-only activity endpoint
+  checks existing local device IDs without device commands or inventory sync;
+  missing contact data and connector failures are explicit. This is not a
+  verified live connectivity count and quiet/sleeping devices may be excluded.
 - Merge of `origin/asunny-01` into `crud-sso`: retained the `backend/` package,
   single root README and Keycloak setup while integrating the incoming lifetime,
   LwM2M server-settings, device-time and feature-flagged firmware APIs and their

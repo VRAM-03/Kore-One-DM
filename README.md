@@ -101,8 +101,11 @@ Angular. The API-documentation link targets the default backend address.
   navigation drawer; collapse state lasts only for the current page session.
 - Expanded sidebar branding is a compact O icon with One, aligned top-left
   and vertically centered. The collapsed rail keeps the O icon alone.
-- Dashboard counts derived from the current device inventory (no invented online
-  status), plus a connector information view.
+- Dashboard shows Devices and Recently active counts. The latter is an estimate
+  based on connector contact within 120 seconds, refreshed every 30 seconds while
+  the dashboard is open. It is not a live connectivity check; missing contact
+  data is reported separately and failed checks show unavailable. The read-only
+  activity check queries existing local devices and does not sync inventory.
 - Search by device/friendly name, creation-time sorting and pagination are
   client-side. Devices default to newest-created-first; the Created time (UTC)
   arrow switches to oldest-first. Equal timestamps use ID ordering; missing

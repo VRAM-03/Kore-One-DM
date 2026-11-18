@@ -260,9 +260,9 @@ h1 {
 }
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 15px;
-  margin-bottom: 25px;
+  margin-bottom: 8px;
 }
 .stat-card {
   border: 1px solid var(--line);
@@ -283,9 +283,10 @@ h1 {
   font-size: 19px;
   flex-shrink: 0;
 }
-.amber-icon {
-  background: #faf6ed;
-  color: #a58a48;
+.stat-note {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 25px;
 }
 .stat-card div {
   display: grid;

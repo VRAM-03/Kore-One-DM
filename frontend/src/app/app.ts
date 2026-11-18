@@ -12,9 +12,9 @@ import {
 } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
-import { filter, map } from 'rxjs';
+import { catchError, exhaustMap, filter, map, of, timer } from 'rxjs';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { CreateDevice, Device, DeviceApi, errorMessage } from './device-api';
+import { CreateDevice, Device, DeviceActivity, DeviceApi, errorMessage } from './device-api';
 import { Icon } from './icon';
 
 type DialogMode = 'create' | 'rename' | 'delete';
@@ -41,6 +41,8 @@ export class App {
   readonly mobileMenu = signal(false);
   readonly sidebarCollapsed = signal(false);
   readonly devices = signal<Device[]>([]);
+  readonly activity = signal<DeviceActivity | null>(null);
+  readonly activityError = signal(false);
   readonly loading = signal(false);
   readonly busy = computed(() => this.loading() || this.saving());
   readonly loadError = signal('');
@@ -98,18 +100,6 @@ export class App {
   readonly rangeEnd = computed(() =>
     Math.min((this.currentPage() + 1) * this.pageSize(), this.filtered().length),
   );
-  readonly registered = computed(
-    () =>
-      this.devices().filter((d) => d.first_registered_at || d.last_registered_at || d.last_seen_at)
-        .length,
-  );
-  readonly neverConnected = computed(
-    () => this.devices().filter((d) => d.connection_status === 'never_connected').length,
-  );
-  readonly localOnly = computed(
-    () => this.devices().filter((d) => d.connection_status === 'not_in_coiote').length,
-  );
-
   constructor() {
     effect(() => {
       const onDevicePage = this.devicePage();
@@ -117,6 +107,18 @@ export class App {
         if (onDevicePage) void this.checkHealth();
         else void this.loadDevices();
       });
+    });
+    effect((onCleanup) => {
+      if (this.view() !== 'dashboard' || this.devicePage()) return;
+      this.activity.set(null);
+      this.activityError.set(false);
+      const subscription = timer(0, 30000)
+        .pipe(exhaustMap(() => this.api.activity().pipe(catchError(() => of(null)))))
+        .subscribe((result) => {
+          this.activity.set(result);
+          this.activityError.set(result === null);
+        });
+      onCleanup(() => subscription.unsubscribe());
     });
   }
 

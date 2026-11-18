@@ -2,6 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 import { Router, provideRouter } from '@angular/router';
+import { Subject, of, throwError } from 'rxjs';
 import { App } from './app';
 import { Device, DeviceApi, DeviceDetails } from './device-api';
 import { DevicePage } from './device-page';
@@ -27,6 +28,9 @@ describe('Device workspace', () => {
     const api = {
       list: vi.fn().mockResolvedValue([device]),
       health: vi.fn().mockResolvedValue({ status: 'ok' }),
+      activity: vi.fn().mockReturnValue(
+        of({ recently_active: 1, unknown: 0, checked_at: '2026-11-16T00:00:00Z' }),
+      ),
       detail: vi.fn().mockResolvedValue(detail),
       create: vi.fn().mockResolvedValue({ ...device, id: 2, endpoint_name: 'new-device' }),
       rename: vi.fn().mockResolvedValue({ ...device, friendly_name: 'Updated' }),
@@ -64,10 +68,76 @@ describe('Device workspace', () => {
     expect(cells[3]?.textContent).toContain('Nov 15, 2026');
     expect(cells[4]?.textContent).toContain('Nov 16, 2026');
     expect(element.textContent).not.toContain('Reachability unknown');
-    expect(app.registered()).toBe(1);
     expect(app.health()).toBe('available');
     expect(element.querySelector('header .backend-state')).toBeNull();
     expect(element.textContent).not.toContain('Online devices');
+  });
+
+  it('refreshes estimated activity only on the dashboard and reports failures', async () => {
+    const { fixture, app, api, element } = setup();
+    await fixture.whenStable();
+    vi.useFakeTimers();
+    try {
+      expect(api.activity).not.toHaveBeenCalled();
+      app.navigate('dashboard');
+      fixture.detectChanges();
+      await vi.advanceTimersByTimeAsync(0);
+      fixture.detectChanges();
+
+      const cards = element.querySelectorAll('.stat-card');
+      expect(cards).toHaveLength(2);
+      expect(cards[0].textContent).toContain('Devices');
+      expect(cards[0].querySelector('strong')?.textContent).toBe('1');
+      expect(cards[1].textContent).toContain('Recently active');
+      expect(cards[1].querySelector('strong')?.textContent).toBe('1');
+      expect(element.querySelector('.stat-note')?.textContent).toContain('not live connectivity');
+      expect(element.textContent).not.toContain('Never connected');
+      expect(element.textContent).not.toContain('Not in connector');
+
+      api.activity.mockReturnValue(throwError(() => new Error('unavailable')));
+      await vi.advanceTimersByTimeAsync(30000);
+      fixture.detectChanges();
+      expect(api.activity).toHaveBeenCalledTimes(2);
+      expect(cards[1].querySelector('strong')?.textContent).toBe('—');
+      expect(element.textContent).toContain('Activity check unavailable');
+      expect(api.list).toHaveBeenCalledTimes(1);
+
+      api.activity.mockReturnValue(
+        of({ recently_active: 0, unknown: 1, checked_at: '2026-11-16T00:01:00Z' }),
+      );
+      await vi.advanceTimersByTimeAsync(30000);
+      fixture.detectChanges();
+      expect(cards[1].querySelector('strong')?.textContent).toBe('0');
+      expect(element.textContent).toContain('1 device(s) have no contact data');
+
+      app.navigate('devices');
+      fixture.detectChanges();
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(api.activity).toHaveBeenCalledTimes(3);
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not overlap activity checks and cancels them when leaving the dashboard', async () => {
+    const { fixture, app, api } = setup();
+    await fixture.whenStable();
+    vi.useFakeTimers();
+    try {
+      const request = new Subject<{ recently_active: number; unknown: number; checked_at: string }>();
+      api.activity.mockReturnValue(request);
+      app.navigate('dashboard');
+      fixture.detectChanges();
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(api.activity).toHaveBeenCalledTimes(1);
+      app.navigate('devices');
+      fixture.detectChanges();
+      expect(request.observed).toBe(false);
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
   });
 
   it('presents connector-neutral inventory and a conceptual super-admin workspace', async () => {

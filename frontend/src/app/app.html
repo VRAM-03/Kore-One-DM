@@ -177,25 +177,25 @@
                 <article class="stat-card">
                   <span class="stat-icon"><app-icon name="radio" /></span>
                   <div>
-                    <span>Registration history</span
-                    ><strong>{{ loading() || loadError() ? '—' : registered() }}</strong>
-                  </div>
-                </article>
-                <article class="stat-card">
-                  <span class="stat-icon"><app-icon name="clock" /></span>
-                  <div>
-                    <span>Never connected</span
-                    ><strong>{{ loading() || loadError() ? '—' : neverConnected() }}</strong>
-                  </div>
-                </article>
-                <article class="stat-card">
-                  <span class="stat-icon amber-icon"><app-icon name="database" /></span>
-                  <div>
-                    <span>Not in connector</span
-                    ><strong>{{ loading() || loadError() ? '—' : localOnly() }}</strong>
+                    <span>Recently active</span
+                    ><strong>{{ activity()?.recently_active ?? '—' }}</strong>
                   </div>
                 </article>
               </div>
+              <p class="stat-note">
+                Contact recorded within the last 2 minutes; checked every 30 seconds. This is an
+                estimate, not live connectivity.
+                @if (activity(); as result) {
+                  Checked at {{ result.checked_at | date: 'HH:mm:ss' : 'UTC' }} UTC.
+                  @if (result.unknown) {
+                    {{ result.unknown }} device(s) have no contact data.
+                  }
+                } @else if (activityError()) {
+                  Activity check unavailable.
+                } @else {
+                  Checking activity…
+                }
+              </p>
             }
 
             <section
