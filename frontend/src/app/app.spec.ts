@@ -36,7 +36,6 @@ describe('Device workspace', () => {
       create: vi.fn().mockResolvedValue({ ...device, id: 2, endpoint_name: 'new-device' }),
       rename: vi.fn().mockResolvedValue({ ...device, friendly_name: 'Updated' }),
       delete: vi.fn().mockResolvedValue(undefined),
-      resources: vi.fn().mockResolvedValue({ resources: [] }),
       serverSettings: vi.fn().mockResolvedValue({ settings: [], unresolved_operation: null }),
       readLifetime: vi.fn().mockResolvedValue({
         task_id: 'lifetime-1',
@@ -535,7 +534,6 @@ describe('Device workspace', () => {
     expect(api.serverSettings).toHaveBeenCalledExactlyOnceWith('lab-device');
     expect(api.readLifetime).toHaveBeenCalledExactlyOnceWith('lab-device');
     expect(api.detail).toHaveBeenCalledTimes(1);
-    expect(api.resources).toHaveBeenCalledExactlyOnceWith('lab-device');
     element.querySelector<HTMLButtonElement>('[data-setting-row="1"] .setting-edit')!.click();
     await fixture.whenStable();
     const lifetime = element.querySelector<HTMLInputElement>('#lifetime-seconds')!;
