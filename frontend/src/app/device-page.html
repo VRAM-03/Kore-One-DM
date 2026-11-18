@@ -11,8 +11,8 @@
       [disabled]="loading() || lastSeenLoading()"
       [title]="
         showingSettings()
-          ? 'Reload details, last seen, and the latest confirmed lifetime'
-          : 'Reload details and last seen for this device'
+          ? 'Reload details and Last seen, and read the current lifetime from the device'
+          : 'Reload details and Last seen for this device'
       "
     >
       <app-icon name="refresh-cw" /> Reload details
@@ -365,7 +365,7 @@
                         (click)="readLifetime()"
                         [disabled]="lifetimeProcessing()"
                       >
-                        <app-icon name="refresh-cw" /> Show current lifetime
+                        <app-icon name="refresh-cw" /> Sync Current Lifetime
                       </button>
                     </div>
                   </div>
