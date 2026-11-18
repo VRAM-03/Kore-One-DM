@@ -27,7 +27,7 @@ export const appConfig: ApplicationConfig = {
       config: {
         url: 'https://sso-dev.korewireless.com',
         realm: 'KORE-CIDP',
-        clientId: 'chts-diagnostic-tool-dev',
+        clientId: 'nexus-av-connector-dev',
       },
     }),
     provideAppInitializer(initializeKeycloak),

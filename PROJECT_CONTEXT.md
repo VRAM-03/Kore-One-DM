@@ -5,6 +5,9 @@ AVSystem Coiote is the first device-management connector. Explain steps for a Py
 
 ## Current project structure and operation (November 17)
 
+- November 18 SSO update: Angular uses `nexus-av-connector-dev` in the
+  existing `KORE-CIDP` realm with browser-based PKCE. No client secret is used.
+  The user confirmed that live sign-in works from `http://localhost:4200/`.
 - November 18 follow-up merge from `asunny-01`: integrates the separate Settings
   view and Device resource observations, fresh Reads, and confirmed Reboot
   submission. Retains Timezone, registration-lifetime verification, Recently

@@ -68,10 +68,11 @@ npm start
 Open **http://localhost:4200**.
 
 The app requires sign-in using the existing KORE development SSO server and
-the `chts-diagnostic-tool-dev` client in the `KORE-CIDP` realm. The shared
-client must allow `http://localhost:4200/*` as a redirect URI and
+the `nexus-av-connector-dev` client in the `KORE-CIDP` realm. The client must
+have Client authentication Off (public client), Standard flow enabled, and
+allow `http://localhost:4200/*` as a redirect URI and
 `http://localhost:4200` as a web origin, support browser-based authorization
-code flow with PKCE, and allow the user's account. Keep using `localhost`
+code flow with PKCE `S256`, and allow the user's account. Keep using `localhost`
 rather than `127.0.0.1` for the frontend; they are different origins. If sign-in
 or initialization fails, startup stops and the browser console reports the
 error. This development SSO configuration requires access to the existing server;
