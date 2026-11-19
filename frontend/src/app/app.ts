@@ -258,6 +258,7 @@ export class App {
     this.configuredSuccessfully.set(false);
     this.connectorForm.reset();
     try {
+      await this.api.validateCoioteCredentials(username.trim(), password);
       await this.api.saveCoioteConfiguration(username.trim(), password);
       this.dialog?.nativeElement.close();
       this.configuredSuccessfully.set(true);
@@ -268,6 +269,8 @@ export class App {
       this.modalError.set(
         error instanceof HttpErrorResponse && error.status === 403
           ? 'Open the local console to save this configuration.'
+          : error instanceof HttpErrorResponse && error.status === 401
+          ? 'Invalid AVSystem Coiote credentials. Please check your username and password.'
           : 'Could not confirm the save. Re-enter the credentials to try again.',
       );
     } finally {

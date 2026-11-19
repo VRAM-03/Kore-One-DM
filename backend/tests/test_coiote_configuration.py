@@ -1,5 +1,6 @@
 import unittest
 from hashlib import pbkdf2_hmac
+from unittest.mock import patch, MagicMock
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -12,6 +13,7 @@ from backend.main import app, get_db
 
 class CoioteConfigurationTests(unittest.TestCase):
     path = "/connectors/coiote/configuration"
+    validate_path = "/connectors/coiote/validate"
     origin = "http://localhost:4200"
 
     def setUp(self):
@@ -71,3 +73,46 @@ class CoioteConfigurationTests(unittest.TestCase):
         self.assertNotIn("test-password", response.text)
         with Session(self.engine) as db:
             self.assertEqual(db.query(CoioteCredentialHashes).count(), 0)
+
+    @patch('backend.coiote_configuration.httpx.post')
+    def test_validate_accepts_valid_credentials(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"access_token": "valid-token"}
+        mock_post.return_value = mock_response
+
+        response = self.client.post(
+            self.validate_path, headers={"Origin": self.origin},
+            json={"username": "test-account", "password": "test-password"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"valid": True})
+        mock_post.assert_called_once()
+
+    @patch('backend.coiote_configuration.httpx.post')
+    def test_validate_rejects_invalid_credentials(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.raise_for_status.side_effect = Exception("Authentication failed")
+        mock_post.return_value = mock_response
+
+        response = self.client.post(
+            self.validate_path, headers={"Origin": self.origin},
+            json={"username": "test-account", "password": "wrong-password"},
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("Invalid credentials", response.text)
+
+    def test_validate_rejects_empty_username(self):
+        response = self.client.post(
+            self.validate_path, headers={"Origin": self.origin},
+            json={"username": "   ", "password": "test-password"},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Enter a username or email address", response.text)
+
+    def test_validate_rejects_cross_origin_requests(self):
+        response = self.client.post(
+            self.validate_path, headers={"Origin": "http://localhost:9999"},
+            json={"username": "test-account", "password": "test-password"},
+        )
+        self.assertEqual(response.status_code, 403)
+
