@@ -34,12 +34,6 @@ export interface DeviceLastSeen {
   last_seen_at: string | null;
 }
 
-export interface DeviceActivity {
-  recently_active: number;
-  unknown: number;
-  checked_at: string;
-}
-
 export interface DeviceSyncResult {
   synced: string[];
   updated: string[];
@@ -127,10 +121,6 @@ export class DeviceApi {
 
   sync(): Promise<DeviceSyncResult> {
     return firstValueFrom(this.http.post<DeviceSyncResult>(`${this.base}/sync-devices`, null));
-  }
-
-  activity() {
-    return this.http.get<DeviceActivity>(`${this.base}/device-activity`).pipe(timeout(20000));
   }
 
   detail(endpoint: string): Promise<DeviceDetails> {

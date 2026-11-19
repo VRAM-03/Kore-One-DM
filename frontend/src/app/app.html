@@ -202,34 +202,45 @@
                 <article class="stat-card">
                   <span class="stat-icon"><app-icon name="cpu" /></span>
                   <div>
-                    <span>Devices</span
-                    ><strong>{{ loading() || loadError() ? '—' : devices().length }}</strong>
+                    <span>Total devices</span
+                    ><strong>{{ loading() || loadError() ? '—' : dashboardStats().total }}</strong>
                   </div>
                 </article>
                 <article class="stat-card">
-                  <span class="stat-icon"><app-icon name="radio" /></span>
+                  <span class="stat-icon"><app-icon name="plus" /></span>
                   <div>
-                    <span>Recently active</span>
-                    ><strong>{{ activity()?.recently_active ?? '—' }}</strong>
+                    <span>New devices · last 7 days</span
+                    ><strong>{{ loading() || loadError() ? '—' : dashboardStats().added }}</strong>
+                  </div>
+                </article>
+                <article class="stat-card" title="Local records with a stored connector device ID">
+                  <span class="stat-icon"><app-icon name="plug" /></span>
+                  <div>
+                    <span>Connector-linked devices</span>
+                    <strong>{{ loading() || loadError() ? '—' : dashboardStats().linked }}</strong>
+                  </div>
+                </article>
+                <article class="stat-card" title="Records marked as having failed connector setup">
+                  <span class="stat-icon"><app-icon name="circle-alert" /></span>
+                  <div>
+                    <span>Provisioning failures</span>
+                    <strong>{{
+                      loading() || loadError() ? '—' : dashboardStats().provisioningFailures
+                    }}</strong>
                   </div>
                 </article>
               </div>
-              <p class="stat-note">
-                Contact recorded within the last 2 minutes; checked every 30 seconds. This is an
-                estimate, not live connectivity.
-                @if (activity(); as result) {
-                  Checked at {{ result.checked_at | date: 'HH:mm:ss' : 'UTC' }} UTC.
-                  @if (result.unknown) {
-                    {{ result.unknown }} device(s) have no contact data.
-                  }
-                } @else if (activityError()) {
-                  Activity check unavailable.
-                } @else {
-                  Checking activity…
-                }
-              </p>
-            }
-
+              @if (loadError()) {
+                <div class="empty-state error-state" role="alert">
+                  <app-icon name="circle-alert" />
+                  <h3>Inventory couldn't be loaded</h3>
+                  <p>{{ loadError() }}</p>
+                  <button class="button secondary" (click)="loadDevices()" [disabled]="busy()">
+                    Try again
+                  </button>
+                </div>
+              }
+            } @else {
             <section
               class="inventory"
               aria-labelledby="inventory-title"
@@ -310,8 +321,8 @@
                             Created time (UTC) <span>{{ sortAscending() ? '↑' : '↓' }}</span>
                           </button>
                         </th>
-                        <th title="First successful device registration recorded by the connector">
-                          Onboarding time (UTC)
+                        <th title="How the device record was added to KORE One DM">
+                          Onboarding status
                         </th>
                         <th class="actions-column">Actions</th>
                       </tr>
@@ -336,13 +347,7 @@
                                 : '—'
                             }}
                           </td>
-                          <td class="timestamp">
-                            {{
-                              device.first_registered_at
-                                ? (device.first_registered_at | date: 'MMM d, y, HH:mm' : 'UTC')
-                                : '—'
-                            }}
-                          </td>
+                          <td>{{ onboardingLabel(device.onboarding_status) }}</td>
                           <td>
                             <div class="row-actions">
                               <button
@@ -418,6 +423,7 @@
                 </div>
               }
             </section>
+            }
           </section>
         }
       }

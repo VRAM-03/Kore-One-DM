@@ -90,8 +90,9 @@ Angular. The API-documentation link targets the default backend address.
 ## Scope
 
 - Shared inventory uses connector-neutral terminology. Device name displays the
-  existing `endpoint_name` and Onboarding time (UTC) shows the stored
-  `first_registered_at`. The list does not show Last seen or poll the connector.
+  existing `endpoint_name` and Onboarding status shows how the record was
+  added (Created in KORE One DM, Imported from connector, Pending or Registration
+  failed). The list does not show Last seen or poll the connector.
   The device overview shows Last seen (UTC) in its details grid and fetches it
   for the selected device only.
   It shows the connector's last recorded contact, not live online/offline status.
@@ -105,9 +106,10 @@ Angular. The API-documentation link targets the default backend address.
   navigation drawer; collapse state lasts only for the current page session.
 - Expanded sidebar branding is a compact O icon with One, aligned top-left
   and vertically centered. The collapsed rail keeps the O icon alone.
-- Dashboard shows Devices and Recently active. The activity estimate checks
-  linked devices for contact in the last 120 seconds every 30 seconds while
-  the dashboard is open. It does not sync inventory or verify live connectivity.
+- The dashboard shows Total devices, New devices (added in the last 7 days),
+  Connector-linked devices (stored connector IDs), and Provisioning failures
+  (failed connector setup). These cards do not show live connectivity. The
+  device table is on the Devices view.
 - Search by device/friendly name, creation-time sorting and pagination are
   client-side. Devices default to newest-created-first; the Created time (UTC)
   arrow switches to oldest-first. Equal timestamps use ID ordering; missing
@@ -157,7 +159,6 @@ Angular. The API-documentation link targets the default backend address.
 | Frontend request                 | Existing backend route       |
 | -------------------------------- | ---------------------------- |
 | `GET /api/health`                | `GET /health`                |
-| `GET /api/device-activity`       | `GET /device-activity`       |
 | `PUT /api/connectors/coiote/configuration` | `PUT /connectors/coiote/configuration` |
 | `GET /api/devices`               | `GET /devices`               |
 | `POST /api/devices`              | `POST /devices`              |

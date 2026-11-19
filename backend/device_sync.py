@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .coiote_client import get_coiote_device_details, list_coiote_devices
-from .models import Device
+from .models import Device, InventorySync
 
 
 def coiote_request_error(error: httpx.HTTPStatusError | httpx.RequestError) -> HTTPException:
@@ -141,6 +141,7 @@ def refresh_devices(db: Session) -> RefreshResult:
                 device.last_seen_at = None
                 device.connector_type = None
                 device.domain = None
+        db.add(InventorySync(completed_at=datetime.now(timezone.utc)))
         db.commit()
     except IntegrityError:
         db.rollback()

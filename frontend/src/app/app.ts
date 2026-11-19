@@ -13,12 +13,21 @@ import {
 } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
-import { catchError, exhaustMap, filter, map, of, timer } from 'rxjs';
+import { filter, map } from 'rxjs';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import Keycloak from 'keycloak-js';
 import { SIGNED_OUT_PATH } from './auth';
-import { CreateDevice, Device, DeviceActivity, DeviceApi, errorMessage } from './device-api';
+import { CreateDevice, Device, DeviceApi, errorMessage } from './device-api';
 import { Icon } from './icon';
+
+const DASHBOARD_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+const ONBOARDING_LABELS: Record<string, string> = {
+  created: 'Pending',
+  coiote_record_created: 'Created in KORE One DM',
+  synced_from_coiote: 'Imported from connector',
+  coiote_registration_failed: 'Registration failed',
+};
 
 type DialogMode = 'create' | 'rename' | 'delete' | 'configure';
 
@@ -52,8 +61,6 @@ export class App {
   readonly mobileMenu = signal(false);
   readonly sidebarCollapsed = signal(false);
   readonly devices = signal<Device[]>([]);
-  readonly activity = signal<DeviceActivity | null>(null);
-  readonly activityError = signal(false);
   readonly loading = signal(false);
   readonly syncing = signal(false);
   readonly busy = computed(() => this.loading() || this.saving() || this.syncing());
@@ -122,6 +129,24 @@ export class App {
   readonly rangeEnd = computed(() =>
     Math.min((this.currentPage() + 1) * this.pageSize(), this.filtered().length),
   );
+  readonly dashboardStats = computed(() => {
+    const cutoff = Date.now() - DASHBOARD_WINDOW_MS;
+    const devices = this.devices();
+    return {
+      total: devices.length,
+      linked: devices.filter((device) => Boolean(device.coiote_device_id)).length,
+      provisioningFailures: devices.filter(
+        (device) => device.onboarding_status === 'coiote_registration_failed',
+      ).length,
+      added: devices.filter(
+        (device) => device.created_at !== null && Date.parse(device.created_at) >= cutoff,
+      ).length,
+    };
+  });
+  onboardingLabel(status: string | null): string {
+    return (status && ONBOARDING_LABELS[status]) || status?.replaceAll('_', ' ') || '—';
+  }
+
   constructor() {
     inject(DestroyRef).onDestroy(() => clearTimeout(this.configurationFeedbackTimer));
     effect(() => {
@@ -131,18 +156,6 @@ export class App {
         if (onDevicePage) void this.checkHealth();
         else void this.loadDevices();
       });
-    });
-    effect((onCleanup) => {
-      if (!this.signedIn || this.view() !== 'dashboard' || this.devicePage()) return;
-      this.activity.set(null);
-      this.activityError.set(false);
-      const subscription = timer(0, 30000)
-        .pipe(exhaustMap(() => this.api.activity().pipe(catchError(() => of(null)))))
-        .subscribe((result) => {
-          this.activity.set(result);
-          this.activityError.set(result === null);
-        });
-      onCleanup(() => subscription.unsubscribe());
     });
   }
 

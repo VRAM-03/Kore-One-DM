@@ -16,9 +16,19 @@ AVSystem Coiote is the first device-management connector. Explain steps for a Py
   submission. Retains Timezone, registration-lifetime verification, Recently
   active and the existing Keycloak client. The connector configuration form
   stores salted hashes locally and does not change the active account.
-- Latest dashboard and SSO direction (November 18): keep Devices and Recently
-  active, with the original dashboard-only 30-second activity polling. The
-  inventory omits the Last seen column and Reload list. Device overview fetches
+- November 19 dashboard: Recently active, its polling and the dashboard device
+  table are removed. Cards are Total devices, New devices (last 7 days, by
+  `created_at`), Connector-linked devices, and Provisioning failures. The
+  dashboard does not display the sync timestamp; the backend still records
+  successful syncs independently of device rows. First registered and Needs
+  attention were dropped. The device
+  list shows Onboarding status (neutral labels) instead of Onboarding time, so
+  never-connected devices no longer show a blank column. Backend
+  `GET /device-activity` remains but the frontend no longer calls it. Devices
+  created in Coiote appear only after the manual Sync devices action.
+  Registered/Not registered/Never connected badges await verification of
+  Coiote's MultiGeo `registrationStatus`.
+- Dashboard and SSO direction (November 18): the inventory omits the Last seen column and Reload list. Device overview fetches
   Last seen for one device only, with no inventory sync or database updates.
   The shared header displays the signed-in email and Keycloak logout, with a
   `/signed-out` return page.

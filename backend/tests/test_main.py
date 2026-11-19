@@ -764,6 +764,30 @@ class DeviceCreateValidationTests(DeviceAPITestCase):
 
 
 class DeviceRefreshTests(DeviceAPITestCase):
+    def test_inventory_sync_timestamp_records_empty_successes_but_not_failures(self):
+        url = "/inventory-sync"
+        initial = self.client.get(url)
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual(initial.headers["cache-control"], "no-store")
+        self.assertEqual(initial.json(), {"last_successful_sync_at": None})
+
+        self.list_devices.return_value = []
+        for day in (18, 19):
+            now = datetime(2026, 11, day, 9, 0, tzinfo=timezone.utc)
+            with patch("backend.device_sync.datetime") as clock:
+                clock.now.return_value = now
+                self.assertEqual(self.client.post("/sync-devices").status_code, 200)
+            self.assertEqual(self.client.get(url).json(), {
+                "last_successful_sync_at": f"2026-11-{day}T09:00:00Z",
+            })
+
+        self.list_devices.return_value = None
+        self.assertEqual(self.client.post("/sync-devices").status_code, 502)
+        self.assertEqual(self.client.get(url).json(), {
+            "last_successful_sync_at": "2026-11-19T09:00:00Z",
+        })
+        self.assertEqual(self.client.get("/devices").json(), [])
+
     def setUp(self):
         super().setUp()
         self.list_patch = patch("backend.device_sync.list_coiote_devices")

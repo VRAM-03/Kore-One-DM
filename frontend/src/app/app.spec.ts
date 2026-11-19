@@ -3,7 +3,6 @@ import { TestBed } from '@angular/core/testing';
 import { vi } from 'vitest';
 import { Router, provideRouter } from '@angular/router';
 import Keycloak from 'keycloak-js';
-import { of, throwError } from 'rxjs';
 import { App } from './app';
 import { Device, DeviceApi, DeviceDetails, RegistrationLifetimeResult } from './device-api';
 import { DevicePage } from './device-page';
@@ -39,9 +38,6 @@ describe('Device workspace', () => {
         missing_from_coiote: [],
       }),
       health: vi.fn().mockResolvedValue({ status: 'ok' }),
-      activity: vi.fn().mockReturnValue(
-        of({ recently_active: 1, unknown: 0, checked_at: '2026-11-16T00:00:00Z' }),
-      ),
       lastSeen: vi.fn().mockResolvedValue({ last_seen_at: '2026-11-17T00:00:00Z' }),
       validateCoioteCredentials: vi.fn().mockResolvedValue({ valid: true }),
       saveCoioteConfiguration: vi.fn().mockResolvedValue(undefined),
@@ -184,52 +180,77 @@ describe('Device workspace', () => {
     expect(element.querySelector('.configuration-toast')).toBeNull();
   });
 
-  it('shows stored onboarding time but no last seen information in the list', async () => {
+  it('shows onboarding status, with neutral labels, and no timing or last seen columns', async () => {
     const { fixture, app, element } = setup();
     await fixture.whenStable();
     fixture.detectChanges();
     expect(element.textContent).toContain('lab-device');
     const cells = element.querySelectorAll('tbody tr:first-child td');
-    expect(cells[3]?.textContent).toContain('Nov 15, 2026');
+    expect(cells[3]?.textContent).toContain('Created in KORE One DM');
+    expect(element.querySelector('thead')?.textContent).toContain('Onboarding status');
+    expect(element.querySelector('thead')?.textContent).not.toContain('Onboarding time');
     expect(element.querySelector('thead')?.textContent).not.toContain('Last seen');
-    expect(cells[4]?.textContent).not.toContain('Nov 16, 2026');
+    expect(cells[3]?.textContent).not.toContain('Nov 15, 2026');
     expect(element.textContent).not.toContain('Reachability unknown');
     expect(app.health()).toBe('available');
     expect(element.querySelector('header .backend-state')).toBeNull();
     expect(element.textContent).not.toContain('Online devices');
   });
 
-  it('refreshes Recently active only while the dashboard is open', async () => {
+  it('shows inventory-derived dashboard cards without the device table', async () => {
+    const { fixture, app, element } = setup();
+    await fixture.whenStable();
+    const day = 24 * 60 * 60 * 1000;
+    const ago = (days: number) => new Date(Date.now() - days * day).toISOString();
+    app.devices.set([
+      { ...device, id: 1, created_at: ago(2) },
+      { ...device, id: 2, created_at: ago(6), connection_status: 'not_in_coiote' },
+      { ...device, id: 3, created_at: ago(30), coiote_device_id: null,
+        onboarding_status: 'coiote_registration_failed' },
+      { ...device, id: 4, created_at: null, coiote_device_id: null, onboarding_status: 'created' },
+    ]);
+    app.navigate('dashboard');
+    fixture.detectChanges();
+
+    const cards = Array.from(element.querySelectorAll('.stat-card'));
+    expect(
+      cards.map((card) => [
+        card.querySelector('span:not(.stat-icon)')?.textContent,
+        card.querySelector('strong')?.textContent?.trim(),
+      ]),
+    ).toEqual([
+      ['Total devices', '4'],
+      ['New devices · last 7 days', '2'],
+      ['Connector-linked devices', '2'],
+      ['Provisioning failures', '1'],
+    ]);
+    expect(element.textContent).not.toContain('Recently active');
+    expect(element.textContent).not.toContain('Needs attention');
+    expect(element.querySelector('.inventory')).toBeNull();
+    expect(element.querySelector('table')).toBeNull();
+
+    app.navigate('devices');
+    fixture.detectChanges();
+    expect(element.querySelector('.inventory')).not.toBeNull();
+    expect(element.querySelector('.stat-card')).toBeNull();
+  });
+
+  it('keeps retry available when the dashboard counts cannot be loaded', async () => {
     const { fixture, app, api, element } = setup();
     await fixture.whenStable();
-    vi.useFakeTimers();
-    try {
-      expect(api.activity).not.toHaveBeenCalled();
-      app.navigate('dashboard');
+    api.list.mockRejectedValueOnce(new Error('Inventory unavailable'));
+    await app.loadDevices();
+    app.navigate('dashboard');
+    fixture.detectChanges();
+    expect(Array.from(element.querySelectorAll('.stat-card strong')).map((v) => v.textContent?.trim()))
+      .toEqual(['—', '—', '—', '—']);
+    expect(element.querySelector('[role="alert"]')?.textContent).toContain('Inventory couldn');
+    api.list.mockResolvedValueOnce([device]);
+    element.querySelector<HTMLButtonElement>('[role="alert"] button')!.click();
+    await vi.waitFor(() => {
       fixture.detectChanges();
-      await vi.advanceTimersByTimeAsync(0);
-      fixture.detectChanges();
-      const cards = element.querySelectorAll('.stat-card');
-      expect(cards).toHaveLength(2);
-      expect(cards[0].textContent).toContain('Devices');
-      expect(cards[0].querySelector('strong')?.textContent).toBe('1');
-      expect(cards[1].textContent).toContain('Recently active');
-      expect(cards[1].querySelector('strong')?.textContent).toBe('1');
-      expect(element.querySelector('.stat-note')?.textContent).toContain('not live connectivity');
-      api.activity.mockReturnValue(throwError(() => new Error('unavailable')));
-      await vi.advanceTimersByTimeAsync(30000);
-      fixture.detectChanges();
-      expect(element.textContent).toContain('Activity check unavailable');
-      app.navigate('devices');
-      fixture.detectChanges();
-      await vi.advanceTimersByTimeAsync(30000);
-      expect(api.activity).toHaveBeenCalledTimes(2);
-      expect(api.lastSeen).not.toHaveBeenCalled();
-      expect(api.list).toHaveBeenCalledTimes(1);
-    } finally {
-      fixture.destroy();
-      vi.useRealTimers();
-    }
+      expect(element.querySelector('.stat-card strong')?.textContent).toBe('1');
+    });
   });
 
   it('shows the signed-in email and logs out through Keycloak', async () => {
@@ -278,7 +299,10 @@ describe('Device workspace', () => {
     expect(inventory.textContent).not.toContain('Coiote');
     expect(inventory.textContent).not.toContain('Record created');
     expect(inventory.textContent).not.toContain('Connection history');
-    expect(inventory.textContent).toContain('Onboarding time (UTC)');
+    expect(inventory.textContent).toContain('Imported from connector');
+    expect(app.onboardingLabel(null)).toBe('—');
+    expect(app.onboardingLabel('coiote_registration_failed')).toBe('Registration failed');
+    expect(app.onboardingLabel('other_state')).toBe('other state');
     expect(inventory.textContent).not.toContain('No contact recorded');
     expect(inventory.querySelector('tbody')?.textContent).toContain(device.endpoint_name);
     const sort = inventory.querySelector<HTMLButtonElement>('.sort-button')!;

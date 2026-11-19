@@ -21,7 +21,7 @@ from .database import engine, Base, get_db, initialize_database
 from .device_lifetime import router as lifetime_router
 from .device_server_settings import router as server_settings_router
 from .device_sync import CoioteRecord, coiote_request_error, refresh_devices
-from .models import Device, DeviceOperation, Group
+from .models import Device, DeviceOperation, Group, InventorySync
 from .coiote_client import (
     create_coiote_device,
     delete_coiote_device,
@@ -344,6 +344,19 @@ def create_device(device: DeviceCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_device)
     return new_device
+
+class InventorySyncStatus(BaseModel):
+    last_successful_sync_at: datetime | None
+
+
+@app.get("/inventory-sync", response_model=InventorySyncStatus)
+def get_inventory_sync(response: Response, db: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    latest = db.query(InventorySync.completed_at).order_by(InventorySync.id.desc()).first()
+    # SQLite stores our UTC timestamps without an offset.
+    completed_at = latest.completed_at.replace(tzinfo=timezone.utc) if latest else None
+    return InventorySyncStatus(last_successful_sync_at=completed_at)
+
 
 @app.post("/sync-devices")
 def sync_devices(db: Session = Depends(get_db)):

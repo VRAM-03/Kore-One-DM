@@ -27,6 +27,13 @@ class DeviceOperation(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class InventorySync(Base):
+    __tablename__ = "inventory_syncs"
+
+    id = Column(Integer, primary_key=True)
+    completed_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class Device(Base):
     __tablename__ = "devices"
 
