@@ -38,6 +38,7 @@ describe('Device workspace', () => {
         of({ recently_active: 1, unknown: 0, checked_at: '2026-11-16T00:00:00Z' }),
       ),
       lastSeen: vi.fn().mockResolvedValue({ last_seen_at: '2026-11-17T00:00:00Z' }),
+      validateCoioteCredentials: vi.fn().mockResolvedValue({ valid: true }),
       saveCoioteConfiguration: vi.fn().mockResolvedValue(undefined),
       detail: vi.fn().mockResolvedValue(detail),
       create: vi.fn().mockResolvedValue({ ...device, id: 2, endpoint_name: 'new-device' }),
@@ -93,7 +94,8 @@ describe('Device workspace', () => {
       'Check connection',
     ]);
     const configure = buttons[0];
-    configure.click();
+    expect(configure.disabled).toBe(true);
+    app.openConnectorConfiguration();
     await fixture.whenStable();
     const dialog = element.querySelector('dialog')!;
     const password = dialog.querySelector<HTMLInputElement>('[formControlName="password"]')!;
@@ -104,6 +106,10 @@ describe('Device workspace', () => {
       .querySelector('form')!
       .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     await fixture.whenStable();
+    expect(api.validateCoioteCredentials).toHaveBeenCalledExactlyOnceWith(
+      'test-account',
+      ' test-password ',
+    );
     expect(api.saveCoioteConfiguration).toHaveBeenCalledExactlyOnceWith(
       'test-account',
       ' test-password ',

@@ -232,6 +232,14 @@ export class DeviceApi {
     );
   }
 
+  validateCoioteCredentials(username: string, password: string): Promise<{ valid: boolean }> {
+    return firstValueFrom(
+      this.http
+        .post<{ valid: boolean }>(`${this.base}/connectors/coiote/validate`, { username, password })
+        .pipe(timeout(15000)),
+    );
+  }
+
   health(): Promise<{ status: string }> {
     return firstValueFrom(
       this.http.get<{ status: string }>(`${this.base}/health`).pipe(timeout(10000)),
