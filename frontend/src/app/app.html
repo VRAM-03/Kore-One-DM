@@ -147,27 +147,40 @@
               </div>
             </dl>
             <div class="connector-actions">
-              <button class="button secondary" (click)="checkHealth()">
-                <app-icon name="refresh-cw" /> Check connection
-              </button>
-              <span
-                class="backend-state"
-                [class.unavailable]="health() === 'unavailable'"
-                [class.checking]="health() === 'checking'"
-                role="status"
-                title="Platform API only, not connector authentication or device reachability"
-                ><span class="tiny-dot"></span>
-                {{
-                  health() === 'available'
-                    ? 'Platform API available'
-                    : health() === 'checking'
-                      ? 'Checking platform API'
-                      : 'Platform API unavailable'
-                }}
-              </span>
-              <button class="button secondary" type="button" (click)="openConnectorConfiguration()">
-                Configure
-              </button>
+              <div class="connector-configure">
+                <button
+                  class="button secondary"
+                  type="button"
+                  (click)="openConnectorConfiguration()"
+                >
+                  Configure
+                </button>
+                @if (configuredSuccessfully()) {
+                  <div class="configuration-toast" role="status" aria-live="polite">
+                    <app-icon name="check" /><span>Configured Successfully</span>
+                  </div>
+                }
+              </div>
+              <div class="connector-connection">
+                <span
+                  class="backend-state"
+                  [class.unavailable]="health() === 'unavailable'"
+                  [class.checking]="health() === 'checking'"
+                  role="status"
+                  title="Platform API only, not connector authentication or device reachability"
+                  ><span class="tiny-dot"></span>
+                  {{
+                    health() === 'available'
+                      ? 'Platform API available'
+                      : health() === 'checking'
+                        ? 'Checking platform API'
+                        : 'Platform API unavailable'
+                  }}
+                </span>
+                <button class="button secondary" type="button" (click)="checkHealth()">
+                  <app-icon name="refresh-cw" /> Check connection
+                </button>
+              </div>
             </div>
           </section>
         } @else {

@@ -138,6 +138,9 @@ Angular. The API-documentation link targets the default backend address.
 - **Coiote connector → Configure** saves salted PBKDF2-SHA256 hashes in local
   SQLite through a same-origin loopback request. This prototype does not verify
   a Coiote login or change the credentials used by the active connector.
+  Configure is left of Check connection. A successful save shows a rounded green
+  **Configured Successfully** toast with a white checkmark below Configure for 12 seconds.
+  This feedback is not persisted and clears on a page refresh.
 - Rename the friendly name only.
 - Delete with an exact endpoint-name confirmation. This can delete the remote
   Coiote record too; it does not stop the running device client.

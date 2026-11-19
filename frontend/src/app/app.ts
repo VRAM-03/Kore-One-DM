@@ -2,6 +2,7 @@ import { CommonModule, DOCUMENT, Location } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import {
   Component,
+  DestroyRef,
   ElementRef,
   ViewChild,
   computed,
@@ -33,6 +34,8 @@ export class App {
   private readonly location = inject(Location);
   private readonly document = inject(DOCUMENT);
   private readonly keycloak = inject(Keycloak);
+  private configurationFeedbackTimer: ReturnType<typeof setTimeout> | undefined;
+  readonly configuredSuccessfully = signal(false);
   readonly signedIn = this.keycloak.authenticated === true;
   readonly email = [this.keycloak.idTokenParsed?.['email'], this.keycloak.tokenParsed?.['email']]
     .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
@@ -119,6 +122,7 @@ export class App {
     Math.min((this.currentPage() + 1) * this.pageSize(), this.filtered().length),
   );
   constructor() {
+    inject(DestroyRef).onDestroy(() => clearTimeout(this.configurationFeedbackTimer));
     effect(() => {
       if (!this.signedIn) return;
       const onDevicePage = this.devicePage();
@@ -220,11 +224,16 @@ export class App {
     this.saving.set(true);
     this.modalError.set('');
     this.notice.set('');
+    clearTimeout(this.configurationFeedbackTimer);
+    this.configuredSuccessfully.set(false);
     this.connectorForm.reset();
     try {
       await this.api.saveCoioteConfiguration(username.trim(), password);
       this.dialog?.nativeElement.close();
-      this.notify('Configuration Successful');
+      this.configuredSuccessfully.set(true);
+      this.configurationFeedbackTimer = setTimeout(() => {
+        this.configuredSuccessfully.set(false);
+      }, 12000);
     } catch (error) {
       this.modalError.set(
         error instanceof HttpErrorResponse && error.status === 403

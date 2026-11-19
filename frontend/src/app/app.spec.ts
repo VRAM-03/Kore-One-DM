@@ -80,14 +80,19 @@ describe('Device workspace', () => {
     return { api, fixture, app: fixture.componentInstance, element, keycloak };
   }
 
-  it('shows a success banner after saving connector credentials and clears the dialog fields', async () => {
+  it('shows a single success toast below Configure after saving, without persisting on refresh', async () => {
     const { fixture, app, api, element } = setup();
     await fixture.whenStable();
     app.navigate('connector');
     await fixture.whenStable();
-    const configure = Array.from(
+    const buttons = Array.from(
       element.querySelectorAll<HTMLButtonElement>('.connector-actions button'),
-    ).find((button) => button.textContent?.trim() === 'Configure')!;
+    );
+    expect(buttons.map((button) => button.textContent?.trim())).toEqual([
+      'Configure',
+      'Check connection',
+    ]);
+    const configure = buttons[0];
     configure.click();
     await fixture.whenStable();
     const dialog = element.querySelector('dialog')!;
@@ -105,9 +110,67 @@ describe('Device workspace', () => {
     );
     expect(dialog.open).toBe(false);
     expect(app.connectorForm.getRawValue()).toEqual({ username: '', password: '' });
-    expect(element.querySelector('.notification[role="status"]')?.textContent).toContain(
-      'Configuration Successful',
+    expect(element.querySelector('.configuration-toast[role="status"]')?.textContent).toContain(
+      'Configured Successfully',
     );
+    expect(configure.nextElementSibling).toBe(element.querySelector('.configuration-toast'));
+    expect(configure.nextElementSibling?.textContent?.trim()).toBe(
+      'Configured Successfully',
+    );
+    expect(element.querySelectorAll('.configuration-toast')).toHaveLength(1);
+    expect(element.querySelector('.configuration-toast app-icon')?.getAttribute('name')).toBe('check');
+    expect(element.querySelector('.notification')).toBeNull();
+
+    fixture.destroy();
+    TestBed.resetTestingModule();
+    const refreshed = setup();
+    await refreshed.fixture.whenStable();
+    refreshed.app.navigate('connector');
+    refreshed.fixture.detectChanges();
+    expect(refreshed.element.querySelector('.configuration-toast')).toBeNull();
+  });
+
+  it('expires configuration feedback after 12 seconds and restarts the timer on another save', async () => {
+    const { fixture, app, element } = setup();
+    await fixture.whenStable();
+    app.navigate('connector');
+    fixture.detectChanges();
+    vi.useFakeTimers();
+    try {
+      app.openConnectorConfiguration();
+      app.connectorForm.setValue({ username: 'test-account', password: 'test-password' });
+      await app.saveConnectorConfiguration();
+      await vi.advanceTimersByTimeAsync(6000);
+      app.openConnectorConfiguration();
+      app.connectorForm.setValue({ username: 'test-account', password: 'test-password' });
+      await app.saveConnectorConfiguration();
+      await vi.advanceTimersByTimeAsync(11999);
+      fixture.detectChanges();
+      expect(element.querySelector('.configuration-toast')?.textContent?.trim()).toBe(
+        'Configured Successfully',
+      );
+      expect(element.querySelector('.configuration-toast')).not.toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      fixture.detectChanges();
+      expect(element.querySelector('.configuration-toast')).toBeNull();
+    } finally {
+      fixture.destroy();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not show configuration success feedback when the save fails', async () => {
+    const { fixture, app, api, element } = setup();
+    await fixture.whenStable();
+    app.navigate('connector');
+    app.openConnectorConfiguration();
+    app.connectorForm.setValue({ username: 'test-account', password: 'test-password' });
+    api.saveCoioteConfiguration.mockRejectedValueOnce(new HttpErrorResponse({ status: 500 }));
+    await app.saveConnectorConfiguration();
+    fixture.detectChanges();
+    expect(element.querySelector('dialog')?.open).toBe(true);
+    expect(element.querySelector('.form-error')?.textContent).toContain('Could not confirm the save');
+    expect(element.querySelector('.configuration-toast')).toBeNull();
   });
 
   it('shows stored onboarding time but no last seen information in the list', async () => {
