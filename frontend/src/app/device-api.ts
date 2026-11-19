@@ -40,6 +40,12 @@ export interface DeviceActivity {
   checked_at: string;
 }
 
+export interface DeviceSyncResult {
+  synced: string[];
+  updated: string[];
+  missing_from_coiote: string[];
+}
+
 export interface CreateDevice {
   endpoint_name: string;
   friendly_name?: string;
@@ -117,6 +123,10 @@ export class DeviceApi {
 
   list(): Promise<Device[]> {
     return firstValueFrom(this.http.get<Device[]>(`${this.base}/devices`));
+  }
+
+  sync(): Promise<DeviceSyncResult> {
+    return firstValueFrom(this.http.post<DeviceSyncResult>(`${this.base}/sync-devices`, null));
   }
 
   activity() {

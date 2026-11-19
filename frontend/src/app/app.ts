@@ -55,7 +55,8 @@ export class App {
   readonly activity = signal<DeviceActivity | null>(null);
   readonly activityError = signal(false);
   readonly loading = signal(false);
-  readonly busy = computed(() => this.loading() || this.saving());
+  readonly syncing = signal(false);
+  readonly busy = computed(() => this.loading() || this.saving() || this.syncing());
   readonly loadError = signal('');
   readonly notice = signal('');
   readonly noticeError = signal(false);
@@ -204,6 +205,35 @@ export class App {
       return false;
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  async syncDevices(): Promise<void> {
+    if (this.busy()) return;
+    this.syncing.set(true);
+    this.notice.set('');
+    try {
+      const result = await this.api.sync();
+      try {
+        const devices = await this.api.list();
+        this.devices.set(devices);
+        this.loadError.set('');
+        this.page.set(0);
+      } catch (error) {
+        this.notify(
+          `Sync completed, but the list could not be reloaded. ${errorMessage(error)}`,
+          true,
+        );
+        return;
+      }
+      this.notify(
+        `Sync complete: ${result.synced.length} imported, ${result.updated.length} updated, ` +
+          `${result.missing_from_coiote.length} not found in the connector.`,
+      );
+    } catch (error) {
+      this.notify(`Sync failed. ${errorMessage(error)}`, true);
+    } finally {
+      this.syncing.set(false);
     }
   }
 

@@ -33,6 +33,11 @@ describe('Device workspace', () => {
     };
     const api = {
       list: vi.fn().mockResolvedValue([device]),
+      sync: vi.fn().mockResolvedValue({
+        synced: ['new-device'],
+        updated: ['lab-device'],
+        missing_from_coiote: [],
+      }),
       health: vi.fn().mockResolvedValue({ status: 'ok' }),
       activity: vi.fn().mockReturnValue(
         of({ recently_active: 1, unknown: 0, checked_at: '2026-11-16T00:00:00Z' }),
@@ -623,7 +628,57 @@ describe('Device workspace', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     expect(element.querySelectorAll('.heading-actions button')).toHaveLength(1);
-    expect(element.querySelector('.inventory-toolbar button')).toBeNull();
+    expect(element.querySelector('.inventory-toolbar button')?.textContent).toContain('Sync devices');
     expect(api.list).toHaveBeenCalledTimes(1);
+  });
+
+  it('syncs once, keeps the list visible while waiting, and reloads with summary counts', async () => {
+    const { fixture, app, api, element } = setup();
+    await fixture.whenStable();
+    let finish!: (value: { synced: string[]; updated: string[]; missing_from_coiote: string[] }) => void;
+    api.sync.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const button = element.querySelector<HTMLButtonElement>('.inventory-toolbar button')!;
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(button.disabled).toBe(false);
+    });
+    button.click();
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(button.disabled).toBe(true);
+    });
+    expect(button.textContent).toContain('Syncing');
+    expect(element.querySelector('tbody')?.textContent).toContain('lab-device');
+    await app.syncDevices();
+    expect(api.sync).toHaveBeenCalledTimes(1);
+    expect(api.list).toHaveBeenCalledTimes(1);
+    api.list.mockResolvedValueOnce([{ ...device, endpoint_name: 'new-device' }]);
+    finish({ synced: ['new-device'], updated: ['lab-device'], missing_from_coiote: ['missing'] });
+    await vi.waitFor(() => {
+      fixture.detectChanges();
+      expect(element.querySelector('tbody')?.textContent).toContain('new-device');
+      expect(button.disabled).toBe(false);
+    });
+    expect(api.list).toHaveBeenCalledTimes(2);
+    expect(app.notice()).toContain('1 imported, 1 updated, 1 not found');
+  });
+
+  it('retains the list on sync failure and distinguishes failure to reload after syncing', async () => {
+    const { fixture, app, api } = setup();
+    await fixture.whenStable();
+    api.sync.mockRejectedValueOnce(new Error('Connector unavailable'));
+    await app.syncDevices();
+    expect(app.devices()).toEqual([device]);
+    expect(api.list).toHaveBeenCalledTimes(1);
+    expect(app.notice()).toContain('Sync failed');
+    expect(app.noticeError()).toBe(true);
+    expect(app.syncing()).toBe(false);
+
+    api.list.mockRejectedValueOnce(new Error('List unavailable'));
+    await app.syncDevices();
+    expect(app.devices()).toEqual([device]);
+    expect(app.notice()).toContain('Sync completed, but the list could not be reloaded');
+    expect(app.noticeError()).toBe(true);
+    expect(app.syncing()).toBe(false);
   });
 });

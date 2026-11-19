@@ -249,6 +249,16 @@
                     [value]="query()"
                     (input)="search(searchInput.value)"
                 /></label>
+                <button
+                  class="button quiet"
+                  type="button"
+                  (click)="syncDevices()"
+                  [disabled]="busy()"
+                  title="Import and update devices from the connector"
+                >
+                  <app-icon name="refresh-cw" [class.spin]="syncing()" />
+                  {{ syncing() ? 'Syncing…' : 'Sync devices' }}
+                </button>
               </div>
               @if (loadError()) {
                 <div class="empty-state error-state" role="alert">

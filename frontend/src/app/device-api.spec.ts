@@ -20,6 +20,16 @@ describe('Existing NEXYN API integration', () => {
   });
   afterEach(() => http.verify());
 
+  it('posts to the existing manual inventory sync endpoint', async () => {
+    const synced = api.sync();
+    const request = http.expectOne('/api/sync-devices');
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toBeNull();
+    const result = { synced: ['new'], updated: ['existing'], missing_from_coiote: ['missing'] };
+    request.flush(result);
+    expect(await synced).toEqual(result);
+  });
+
   it('uses only existing device APIs with correctly encoded identities and payloads', async () => {
     const endpoint = 'sensor with space?#';
     const url = '/api/devices/sensor%20with%20space%3F%23';

@@ -146,7 +146,11 @@ Angular. The API-documentation link targets the default backend address.
   Coiote record too; it does not stop the running device client.
 - Inventory loads automatically from the platform database, without a Reload
   list button. Reload details also refreshes Last seen for the selected device.
-  No separate sync UI action.
+- **Sync devices** manually calls `POST /sync-devices`, then reloads inventory.
+  It imports connector devices and updates existing records; missing connector
+  records are reported, not deleted locally. While syncing, the button is disabled.
+  Failures preserve the displayed list and show an error. This is not automatic
+  polling or bidirectional synchronization.
 - No group operations in the frontend, arbitrary device writes,
   CMP functionality, or direct access to Coiote credentials.
 

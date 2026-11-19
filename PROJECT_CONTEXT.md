@@ -5,6 +5,9 @@ AVSystem Coiote is the first device-management connector. Explain steps for a Py
 
 ## Current project structure and operation (November 17)
 
+- November 19 inventory update: Sync devices manually calls `POST /sync-devices`
+  and reloads the list on success, reporting imported/updated/missing counts.
+  Sync failures preserve the displayed inventory. No automatic inventory polling.
 - November 18 SSO update: Angular uses `nexus-av-connector-dev` in the
   existing `KORE-CIDP` realm with browser-based PKCE. No client secret is used.
   The user confirmed that live sign-in works from `http://localhost:4200/`.
